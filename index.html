@@ -221,7 +221,7 @@ function incomingMap(){
 }
 function applyIncoming(m){
   DATA=dataFromDocs(m); ensureTiposPadrao(DATA);
-  try{ localStorage.setItem(LS_KEY, JSON.stringify(DATA)); }catch(e){}
+  if(!SB.on){ try{ localStorage.setItem(LS_KEY, JSON.stringify(DATA)); }catch(e){} }
 }
 function syncRender(){
   const a=document.activeElement;
@@ -251,6 +251,7 @@ function syncFirstLoad(){
   SYNC.last=m; applyIncoming(m); setSync('ok'); render();
 }
 async function startSync(){
+  if(SB.on) return;
   let db=null;
   try{ if(typeof claude!=='undefined') db=await claude.use('db'); }catch(e){}
   if(!db){ setSync('local'); return; }
@@ -262,6 +263,118 @@ async function startSync(){
   db.collection('obras').onSnapshot(s=>{ const m={}; s.docs.forEach(d=>{m['obras/'+d.id]=canon(d.data());}); r.obras=m; got.obras=true; tick(); },onErr);
   db.collection('caixa').onSnapshot(s=>{ const m={}; s.docs.forEach(d=>{m['caixa/'+d.id]=canon(d.data());}); r.caixa=m; got.caixa=true; tick(); },onErr);
   db.collection('contas').onSnapshot(s=>{ const m={}; s.docs.forEach(d=>{m['contas/'+d.id]=canon(d.data());}); r.contas=m; got.contas=true; tick(); },onErr);
+}
+
+// ===== Modo online (Supabase): login por e-mail/senha e banco compartilhado =====
+const SB_URL='https://zfdknnllggkziwtavsnz.supabase.co';
+const SB_KEY='sb_publishable_hQ4B_2r_ibd8VYrK9qmqLg_S74fpeYw';
+const SB_LS='financeiro_sb_sessao';
+const SB={on: typeof claude==='undefined', tok:null, refresh:null, exp:0, perfil:null, acessos:[], poll:null, carregando:false, erro:''};
+function emptyData(){ return {tiposServico:[],colaboradores:[],minhasEmpresas:[],historico:[],incc:[],despesasFixas:[],obras:[],caixa:[],contas:[]}; }
+function sbSalvarSessao(){ try{ if(SB.tok) localStorage.setItem(SB_LS, JSON.stringify({tok:SB.tok,refresh:SB.refresh,exp:SB.exp})); else localStorage.removeItem(SB_LS); }catch(e){} }
+async function sbReq(path,opt={},semAuth){
+  const h=Object.assign({apikey:SB_KEY,'Content-Type':'application/json'},opt.headers||{});
+  h.Authorization='Bearer '+((!semAuth&&SB.tok)||SB_KEY);
+  const r=await fetch(SB_URL+path,Object.assign({},opt,{headers:h}));
+  if(r.status===401 && !semAuth && SB.refresh && !opt._retry){ if(await sbRenovar()) return sbReq(path,Object.assign({},opt,{_retry:true}),semAuth); }
+  return r;
+}
+async function sbErro(r){ let m=''; try{ const j=await r.json(); m=j.msg||j.message||j.error_description||j.error||j.erro||''; }catch(e){} return new Error(m||('Erro '+r.status)); }
+function sbGuardar(j){ SB.tok=j.access_token; SB.refresh=j.refresh_token; SB.exp=Date.now()+((j.expires_in||3600)*1000); sbSalvarSessao(); }
+async function sbRenovar(){
+  try{
+    const r=await fetch(SB_URL+'/auth/v1/token?grant_type=refresh_token',{method:'POST',headers:{apikey:SB_KEY,'Content-Type':'application/json'},body:JSON.stringify({refresh_token:SB.refresh})});
+    if(!r.ok) return false; sbGuardar(await r.json()); return true;
+  }catch(e){ return false; }
+}
+async function sbEntrar(email,senha){
+  const r=await fetch(SB_URL+'/auth/v1/token?grant_type=password',{method:'POST',headers:{apikey:SB_KEY,'Content-Type':'application/json'},body:JSON.stringify({email,password:senha})});
+  if(!r.ok){ const e=await sbErro(r); throw new Error(/invalid login/i.test(e.message)?'E-mail ou senha incorretos.':e.message); }
+  const j=await r.json(); sbGuardar(j); SB.uid=j.user&&j.user.id; await sbIniciar();
+}
+async function sbPerfil(){
+  const r=await sbReq('/rest/v1/profiles?select=user_id,role,colaborador_id,email');
+  if(!r.ok) throw await sbErro(r);
+  const lista=await r.json();
+  const eu=lista.find(p=>p.user_id===SB.uid) || (lista.length===1?lista[0]:null);
+  return {eu,lista};
+}
+function sbUidDoToken(){ try{ return JSON.parse(atob(SB.tok.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))).sub; }catch(e){ return null; } }
+async function sbIniciar(){
+  SB.uid=sbUidDoToken();
+  const {eu,lista}=await sbPerfil();
+  if(!eu){ await sbSair(true); throw new Error('Seu usuário não tem permissão de acesso. Fale com o administrador.'); }
+  SB.perfil=eu; SB.acessos=eu.role==='admin'?lista:[];
+  SESSION= eu.role==='admin' ? {role:'admin'} : {role:'colab',userId:eu.colaborador_id};
+  SB.carregando=true; render();
+  await sbCarregar(true);
+  clearInterval(SB.poll); SB.poll=setInterval(()=>{ if(SESSION.role) sbCarregar(false); },20000);
+}
+async function sbBuscarDocs(){
+  if(SB.perfil.role==='colab'){
+    const r=await sbReq('/rest/v1/rpc/colab_dados',{method:'POST',body:'{}'}); if(!r.ok) throw await sbErro(r); return r.json();
+  }
+  const out=[]; let ini=0;
+  for(;;){
+    const r=await sbReq('/rest/v1/docs?select=path,data&order=path',{headers:{Range:ini+'-'+(ini+999),'Range-Unit':'items'}});
+    if(!r.ok) throw await sbErro(r);
+    const lote=await r.json(); out.push(...lote); if(lote.length<1000) break; ini+=1000;
+  }
+  return out;
+}
+async function sbCarregar(primeira){
+  try{
+    const docs=await sbBuscarDocs(), r=SYNC.remote;
+    r.cfg=null; r.obras={}; r.caixa={}; r.contas={};
+    docs.forEach(d=>{ const c=canon(d.data);
+      if(d.path==='cfg/main') r.cfg=c;
+      else if(d.path.startsWith('obras/')) r.obras[d.path]=c;
+      else if(d.path.startsWith('caixa/')) r.caixa[d.path]=c;
+      else if(d.path.startsWith('contas/')) r.contas[d.path]=c; });
+    SB.carregando=false; SB.erro='';
+    if(!SYNC.initialized){
+      if(SB.perfil.role==='admin') SYNC.db=sbDb();
+      syncFirstLoad();
+    } else syncApplyRemote();
+  }catch(e){
+    SB.carregando=false; SB.erro=e.message; setSync('error',e);
+    if(primeira) render();
+  }
+}
+function sbDb(){
+  return { doc:p=>({
+    set:async obj=>{ const r=await sbReq('/rest/v1/docs?on_conflict=path',{method:'POST',headers:{Prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify({path:p,collection:p.split('/')[0],data:obj,updated_at:new Date().toISOString()})}); if(!r.ok) throw await sbErro(r); },
+    delete:async ()=>{ const r=await sbReq('/rest/v1/docs?path=eq.'+encodeURIComponent(p),{method:'DELETE'}); if(!r.ok) throw await sbErro(r); }
+  }) };
+}
+async function sbMarcarEntrega(obraId,mi,ei,concluido){
+  const r=await sbReq('/rest/v1/rpc/marcar_entrega',{method:'POST',body:JSON.stringify({p_obra:safeId(obraId),p_mi:+mi,p_ei:+ei,p_concluido:!!concluido})});
+  if(!r.ok) throw await sbErro(r);
+}
+async function sbSenha(nova){
+  const r=await sbReq('/auth/v1/user',{method:'PUT',body:JSON.stringify({password:nova})}); if(!r.ok) throw await sbErro(r);
+}
+async function sbAcesso(acao,email,extra){
+  const r=await sbReq('/functions/v1/gerenciar-acesso',{method:'POST',body:JSON.stringify(Object.assign({acao,email},extra||{}))});
+  const j=await r.json().catch(()=>({})); if(!r.ok) throw new Error(j.erro||('Erro '+r.status)); return j;
+}
+async function sbRecarregarAcessos(){ try{ const {lista}=await sbPerfil(); SB.acessos=lista; }catch(e){} }
+async function sbSair(silencioso){
+  try{ if(SB.tok) await fetch(SB_URL+'/auth/v1/logout',{method:'POST',headers:{apikey:SB_KEY,Authorization:'Bearer '+SB.tok}}); }catch(e){}
+  clearInterval(SB.poll); clearTimeout(SYNC.timer); clearTimeout(SYNC.retry);
+  SB.tok=null; SB.refresh=null; SB.perfil=null; SB.acessos=[]; sbSalvarSessao();
+  Object.assign(SYNC,{db:null,last:{},busy:false,timer:null,again:false,initialized:false,renderPending:false,retry:null,remote:{cfg:null,obras:{},caixa:{},contas:{}},got:{}});
+  DATA=emptyData(); ensureTiposPadrao(DATA); SESSION={role:null,userId:null}; TAB='dashboard';
+  if(!silencioso) render();
+}
+async function sbBoot(){
+  let s=null; try{ s=JSON.parse(localStorage.getItem(SB_LS)); }catch(e){}
+  if(!s||!s.refresh){ render(); return; }
+  SB.tok=s.tok; SB.refresh=s.refresh; SB.exp=s.exp;
+  try{
+    if(Date.now()>SB.exp-60000 && !(await sbRenovar())) throw new Error('sessão expirada');
+    await sbIniciar();
+  }catch(e){ await sbSair(true); render(); }
 }
 
 function defaultData(){
@@ -479,8 +592,8 @@ function migrarBaixas(d){
     });
   });
 }
-function load(){ try{const raw=localStorage.getItem(LS_KEY); if(raw){const d=JSON.parse(raw); ensureTiposPadrao(d); LOADED_FROM_LS=true; save(d); return d;} }catch(e){} const d=defaultData(); ensureTiposPadrao(d); save(d); return d; }
-function save(d){ try{ localStorage.setItem(LS_KEY, JSON.stringify(d)); }catch(e){} if(SYNC.initialized && d===DATA) syncSchedule(); }
+function load(){ if(SB.on){ const d0=emptyData(); ensureTiposPadrao(d0); return d0; } try{const raw=localStorage.getItem(LS_KEY); if(raw){const d=JSON.parse(raw); ensureTiposPadrao(d); LOADED_FROM_LS=true; save(d); return d;} }catch(e){} const d=defaultData(); ensureTiposPadrao(d); save(d); return d; }
+function save(d){ if(!SB.on){ try{ localStorage.setItem(LS_KEY, JSON.stringify(d)); }catch(e){} } if(SYNC.initialized && d===DATA) syncSchedule(); }
 let DATA=load();
 let SESSION={role:null,userId:null};
 let TAB='dashboard';
@@ -699,12 +812,45 @@ function resumoEtapasObra(obra){
 function render(){
   const el=document.getElementById('app');
   if(!SESSION.role){ el.innerHTML=loginView(); attachLogin(); return; }
+  if(SB.on && SB.carregando){ el.innerHTML='<div style="padding:60px;text-align:center;color:var(--muted,#667);">Carregando seus dados…</div>'; return; }
+  if(SB.on && SB.erro && !SYNC.initialized){ el.innerHTML=`<div style="padding:60px;text-align:center;"><p>Não foi possível carregar os dados.</p><p class="small" style="color:var(--bad);">${SB.erro}</p><button class="btn" id="sbTentar">Tentar de novo</button> <button class="btn secondary" id="sbSairErro">Sair</button></div>`; document.getElementById('sbTentar').onclick=async()=>{SB.erro='';SB.carregando=true;render();await sbCarregar(true);}; document.getElementById('sbSairErro').onclick=()=>sbSair(); return; }
   el.innerHTML=mainView();
   attachMain();
   attachSync();
   attachBaixas();
 }
+function acessoBox(u){
+  if(!SB.on) return '';
+  const ac=(SB.acessos||[]).find(a=>a.colaborador_id===u.id);
+  if(ac) return `<div class="card" style="background:var(--bg-soft,#f4f7fa);margin-top:10px;"><h3 style="margin:0 0 6px;">Acesso ao sistema</h3>
+    <p class="small">✔ Tem login: <b>${ac.email}</b></p>
+    <div class="row-flex"><input type="text" class="acSenha" data-u="${u.id}" placeholder="Nova senha (mín. 8 caracteres)" style="min-width:230px;">
+      <button class="btn secondary acReset" data-u="${u.id}" data-e="${ac.email}">Redefinir senha</button>
+      <button class="btn danger acDel" data-u="${u.id}" data-e="${ac.email}">Remover acesso</button></div>
+    <p class="small acMsg" data-u="${u.id}"></p></div>`;
+  return `<div class="card" style="background:var(--bg-soft,#f4f7fa);margin-top:10px;"><h3 style="margin:0 0 6px;">Acesso ao sistema</h3>
+    <p class="small">Sem login ainda. Informe o e-mail e uma senha inicial e repasse ao colaborador; ele poderá trocá-la depois.</p>
+    <div class="row-flex"><input type="text" class="acEmail" data-u="${u.id}" placeholder="E-mail de login" value="${u.email||''}" style="min-width:230px;">
+      <input type="text" class="acSenha" data-u="${u.id}" placeholder="Senha inicial (mín. 8 caracteres)" style="min-width:230px;">
+      <button class="btn acNovo" data-u="${u.id}">Criar acesso</button></div>
+    <p class="small acMsg" data-u="${u.id}"></p></div>`;
+}
 function loginView(){
+  if(SB.on) return `<div class="loginpage">
+    <div class="loginbrand"><img src="${LOGO_ET}" alt="ET Engenharia e Projetos" style="width:170px;margin-bottom:28px;"><h1>Financeiro</h1><p>Obras, cobranças, caixa e pagamentos da equipe em um só lugar — no lugar das planilhas.</p></div>
+    <div class="loginform">
+      <h2 style="margin:0 0 4px;font-size:20px;">Bem-vindo</h2>
+      <p class="muted" style="margin:0 0 18px;">Entre com o seu e-mail e a sua senha.</p>
+      <form id="loginForm" class="card" autocomplete="on">
+        <label class="small">E-mail</label>
+        <input type="email" id="lgEmail" autocomplete="username" required style="width:100%;margin-bottom:10px;">
+        <label class="small">Senha</label>
+        <input type="password" id="lgSenha" autocomplete="current-password" required style="width:100%;margin-bottom:12px;">
+        <button class="btn" id="lgBtn" type="submit" style="width:100%;">Entrar</button>
+        <p class="small" id="lgMsg" style="color:var(--bad);min-height:18px;margin:10px 0 0;"></p>
+        <p class="small muted">Esqueceu a senha? Peça ao administrador para redefinir.</p>
+      </form>
+    </div></div>`;
   const opts=DATA.colaboradores.map(u=>`<option value="${u.id}">${u.nome}</option>`).join('');
   return `<div class="loginpage">
     <div class="loginbrand"><img src="${LOGO_ET}" alt="ET Engenharia e Projetos" style="width:170px;margin-bottom:28px;"><h1>Financeiro</h1><p>Obras, cobranças, caixa e pagamentos da equipe em um só lugar — no lugar das planilhas.</p></div>
@@ -721,6 +867,17 @@ function loginView(){
     </div></div>`;
 }
 function attachLogin(){
+  if(SB.on){
+    const f=document.getElementById('loginForm');
+    f.onsubmit=async e=>{
+      e.preventDefault();
+      const b=document.getElementById('lgBtn'), m=document.getElementById('lgMsg');
+      b.disabled=true; b.textContent='Entrando…'; m.textContent='';
+      try{ await sbEntrar(document.getElementById('lgEmail').value.trim().toLowerCase(), document.getElementById('lgSenha').value); }
+      catch(err){ m.textContent=err.message; b.disabled=false; b.textContent='Entrar'; }
+    };
+    return;
+  }
   document.getElementById('loginAdmin').onclick=()=>{SESSION={role:'admin'};render();};
   document.getElementById('loginColab').onclick=()=>{const id=document.getElementById('selColab').value;SESSION={role:'colab',userId:id};render();};
 }
@@ -767,9 +924,9 @@ function mainView(){
       <button class="btn" id="enviarLocal">Enviar os dados deste navegador para a nuvem</button> <button class="btn secondary" id="descartarLocal">Descartar, manter os da nuvem</button>
     </div>`; }catch(e){} }
   const info=admin?(TAB_INFO[TAB]||TAB_INFO.colaboradores):['Meus pagamentos','Etapas, aprovações e valores a receber'];
-  const foot=`<div class="side-foot"><div class="user">${nome||''}</div><span id="syncChip">${SYNC_LABEL[SYNC.state]||''}</span>${adminTools}<button id="logout">Sair</button></div>`;
+  const foot=`<div class="side-foot"><div class="user">${nome||''}</div><span id="syncChip">${SYNC_LABEL[SYNC.state]||''}</span>${adminTools}${SB.on?'<button id="alterarSenha">Alterar senha</button>':''}<button id="logout">Sair</button></div>`;
   const side=`<aside class="side"><div class="brand"><img src="${LOGO_ET}" alt="ET Engenharia e Projetos"><span>Financeiro · gestão de obras e caixa</span></div>${tabsHtml}${foot}</aside>`;
-  const head=`<div class="pagehead"><div><h1>${info[0]}</h1><div class="sub">${info[1]}</div></div>${admin?'':`<div class="who"><span id="syncChip">${SYNC_LABEL[SYNC.state]||''}</span> ${nome||''} <button id="logout">Sair</button></div>`}</div>`;
+  const head=`<div class="pagehead"><div><h1>${info[0]}</h1><div class="sub">${info[1]}</div></div>${admin?'':`<div class="who"><span id="syncChip">${SYNC_LABEL[SYNC.state]||''}</span> ${nome||''} ${SB.on?'<button id="alterarSenha">Alterar senha</button>':''}<button id="logout">Sair</button></div>`}</div>`;
   return `<div class="shell ${admin?'':'nosidebar'}">${admin?side:''}<div class="main">${head}<div class="wrap">${banner}${empresaFiltroBar()}${body}</div></div></div>`;
 }
 function resolverBaixa(k,a,b,c){
@@ -1815,7 +1972,8 @@ function colaboradoresView(){
         <div class="field"><label>Chave PIX / dados bancários</label><input type="text" class="colabCampo" data-u="${u.id}" data-f="pix" value="${u.pix||''}"></div>
         <div class="field"><label>Data de início</label><input type="date" class="colabCampo" data-u="${u.id}" data-f="dataInicio" value="${u.dataInicio||''}"></div>
         <div class="field"><label>Sócio</label><label class="small"><input type="checkbox" class="colabSocio" data-u="${u.id}" ${u.socio?'checked':''}> Recebe antecipação de lucros (recibo pela Pimentel; NF pela ET)</label></div>
-      </div>`:''}
+      </div>
+      ${acessoBox(u)}`:''}
       <div style="overflow-x:auto;"><table style="margin-top:10px;"><tr><th>Obra</th><th>Papel / etapa</th><th class="num">%</th><th class="num">Valor</th><th style="text-align:center;">Situação</th><th>Aprovação</th><th>Pagamento</th></tr>${linhasHtml}</table></div>
       ${mesesHtml?`<h3 style="margin:12px 0 2px;">Fechamento por mês</h3>${mesesHtml}`:''}
       <div class="row-flex" style="justify-content:flex-end;gap:16px;margin-top:6px;">
@@ -2127,7 +2285,14 @@ function abrirRelatorioObra(obraId){
 }
 
 function attachMain(){
-  document.getElementById('logout').onclick=()=>{SESSION={role:null};render();};
+  document.getElementById('logout').onclick=()=>{ if(SB.on){ sbSair(); } else { SESSION={role:null}; render(); } };
+  const chs=document.getElementById('alterarSenha');
+  if(chs) chs.onclick=async()=>{
+    const n=prompt('Digite a nova senha (mínimo 8 caracteres):'); if(n===null) return;
+    if(n.length<8){ alert('A senha precisa ter pelo menos 8 caracteres.'); return; }
+    const c=prompt('Repita a nova senha:'); if(c!==n){ alert('As senhas não conferem.'); return; }
+    try{ await sbSenha(n); alert('Senha alterada com sucesso.'); }catch(err){ alert('Não foi possível alterar: '+err.message); }
+  };
   document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{TAB=b.dataset.tab;PENDING_DEL='';render();});
 
   if(SESSION.role==='colab'){
@@ -2142,6 +2307,10 @@ function attachMain(){
       item.concluido = e.target.checked;
       item.data = item.concluido ? new Date().toISOString().slice(0,10) : '';
       logAcao('Entrega '+(item.concluido?'concluída':'reaberta')+' por '+colabNome(membro.colaboradorId)+' — '+obra.nomeObra+' / '+item.nome);
+      if(SB.on){
+        const antes=!item.concluido, mi=cb.dataset.mi, ei=cb.dataset.ei, oid=obra.id;
+        sbMarcarEntrega(oid,mi,ei,item.concluido).then(()=>sbCarregar(false)).catch(err=>{ item.concluido=antes; item.data=''; alert('Não foi possível registrar: '+err.message); render(); });
+      }
       save(DATA); render();
     });
   }
@@ -2455,6 +2624,25 @@ function attachMain(){
   }
 
   if(TAB==='colaboradores' && SESSION.role==='admin'){
+    const acMsg=(u,t,ok)=>{ const el=document.querySelector('.acMsg[data-u="'+u+'"]'); if(el){ el.textContent=t; el.style.color=ok?'var(--ok,#1a7f4b)':'var(--bad)'; } };
+    document.querySelectorAll('.acNovo').forEach(b=>b.onclick=async()=>{
+      const u=b.dataset.u, em=document.querySelector('.acEmail[data-u="'+u+'"]').value.trim().toLowerCase(), se=document.querySelector('.acSenha[data-u="'+u+'"]').value;
+      if(!em||se.length<8){ acMsg(u,'Informe o e-mail e uma senha com pelo menos 8 caracteres.'); return; }
+      b.disabled=true; acMsg(u,'Criando…',true);
+      try{ await sbAcesso('criar',em,{senha:se,colaboradorId:u}); await sbRecarregarAcessos(); logAcao('Acesso criado para '+colabNome(u)); render(); }
+      catch(err){ b.disabled=false; acMsg(u,err.message); }
+    });
+    document.querySelectorAll('.acReset').forEach(b=>b.onclick=async()=>{
+      const u=b.dataset.u, se=document.querySelector('.acSenha[data-u="'+u+'"]').value;
+      if(se.length<8){ acMsg(u,'Digite a nova senha (mínimo 8 caracteres).'); return; }
+      try{ await sbAcesso('senha',b.dataset.e,{senha:se}); document.querySelector('.acSenha[data-u="'+u+'"]').value=''; acMsg(u,'Senha redefinida.',true); }
+      catch(err){ acMsg(u,err.message); }
+    });
+    document.querySelectorAll('.acDel').forEach(b=>b.onclick=async()=>{
+      if(!confirm('Remover o acesso de '+b.dataset.e+'? O colaborador deixa de conseguir entrar.')) return;
+      try{ await sbAcesso('remover',b.dataset.e); await sbRecarregarAcessos(); logAcao('Acesso removido de '+colabNome(b.dataset.u)); render(); }
+      catch(err){ acMsg(b.dataset.u,err.message); }
+    });
     document.querySelectorAll('.togglecolab').forEach(b=>b.onclick=()=>{OPEN_COLAB=OPEN_COLAB===b.dataset.u?null:b.dataset.u;render();});
     document.querySelectorAll('.gerarrecibo').forEach(b=>b.onclick=()=>{ abrirReciboColaborador(b.dataset.u, b.dataset.mes, b.dataset.e); });
     document.querySelectorAll('.gerarnf').forEach(b=>b.onclick=()=>{ abrirSolicitacaoNF(b.dataset.u, b.dataset.mes, b.dataset.e); });
@@ -2492,8 +2680,7 @@ function attachMain(){
     };
   }
 }
-render();
-startSync();
+if(SB.on) sbBoot(); else { render(); startSync(); }
 </script>
 </body>
 </html>

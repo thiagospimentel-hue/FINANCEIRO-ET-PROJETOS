@@ -56,7 +56,7 @@ begin
   delete from public.convites where email = lower(new.email);
   return new;
 end $$;
-create trigger on_auth_user_created before insert on auth.users
+create trigger on_auth_user_created after insert on auth.users
   for each row execute function public.novo_usuario();
 
 -- visão restrita do colaborador: só as próprias entregas e pagamentos
