@@ -341,10 +341,16 @@ async function sbCarregar(primeira){
     if(primeira) render();
   }
 }
+function sbRemoto(p,obj){
+  const r=SYNC.remote, c=obj==null?null:canon(obj);
+  if(p==='cfg/main'){ r.cfg=c; return; }
+  const m=p.startsWith('obras/')?r.obras:p.startsWith('caixa/')?r.caixa:p.startsWith('contas/')?r.contas:null;
+  if(!m) return; if(c===null) delete m[p]; else m[p]=c;
+}
 function sbDb(){
   return { doc:p=>({
-    set:async obj=>{ const r=await sbReq('/rest/v1/docs?on_conflict=path',{method:'POST',headers:{Prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify({path:p,collection:p.split('/')[0],data:obj,updated_at:new Date().toISOString()})}); if(!r.ok) throw await sbErro(r); },
-    delete:async ()=>{ const r=await sbReq('/rest/v1/docs?path=eq.'+encodeURIComponent(p),{method:'DELETE'}); if(!r.ok) throw await sbErro(r); }
+    set:async obj=>{ const r=await sbReq('/rest/v1/docs?on_conflict=path',{method:'POST',headers:{Prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify({path:p,collection:p.split('/')[0],data:obj,updated_at:new Date().toISOString()})}); if(!r.ok) throw await sbErro(r); sbRemoto(p,obj); },
+    delete:async ()=>{ const r=await sbReq('/rest/v1/docs?path=eq.'+encodeURIComponent(p),{method:'DELETE'}); if(!r.ok) throw await sbErro(r); sbRemoto(p,null); }
   }) };
 }
 async function sbMarcarEntrega(obraId,mi,ei,concluido){
@@ -367,7 +373,40 @@ async function sbSair(silencioso){
   DATA=emptyData(); ensureTiposPadrao(DATA); SESSION={role:null,userId:null}; TAB='dashboard';
   if(!silencioso) render();
 }
+function sbLerLink(){
+  const h=new URLSearchParams(location.hash.replace(/^#/,''));
+  if(h.get('error_description')){ SB.aviso=(h.get('error_code')==='otp_expired'?'Este link expirou ou já foi usado. Peça um novo convite ao administrador.':h.get('error_description').replace(/\+/g,' ')); history.replaceState(null,'',location.pathname); return false; }
+  if(h.get('access_token') && /^(invite|recovery|signup|magiclink)$/.test(h.get('type')||'')){
+    SB.tok=h.get('access_token'); SB.refresh=h.get('refresh_token'); SB.exp=Date.now()+((+h.get('expires_in')||3600)*1000); sbSalvarSessao();
+    history.replaceState(null,'',location.pathname); SB.definirSenha=true; return true;
+  }
+  return false;
+}
+function senhaView(){
+  return `<div class="loginpage">
+    <div class="loginbrand"><img src="${LOGO_ET}" alt="ET Engenharia e Projetos" style="width:170px;margin-bottom:28px;"><h1>Financeiro</h1><p>Defina a sua senha para entrar no sistema.</p></div>
+    <div class="loginform"><h2 style="margin:0 0 4px;font-size:20px;">Crie a sua senha</h2>
+      <p class="muted" style="margin:0 0 18px;">Use pelo menos 8 caracteres.</p>
+      <form id="senhaForm" class="card">
+        <label class="small">Nova senha</label><input type="password" id="sn1" autocomplete="new-password" required minlength="8" style="width:100%;margin-bottom:10px;">
+        <label class="small">Repita a senha</label><input type="password" id="sn2" autocomplete="new-password" required minlength="8" style="width:100%;margin-bottom:12px;">
+        <button class="btn" id="snBtn" type="submit" style="width:100%;">Salvar e entrar</button>
+        <p class="small" id="snMsg" style="color:var(--bad);min-height:18px;margin:10px 0 0;"></p>
+      </form></div></div>`;
+}
+function attachSenha(){
+  document.getElementById('senhaForm').onsubmit=async e=>{
+    e.preventDefault();
+    const a=document.getElementById('sn1').value, b=document.getElementById('sn2').value, m=document.getElementById('snMsg'), btn=document.getElementById('snBtn');
+    if(a.length<8){ m.textContent='A senha precisa ter pelo menos 8 caracteres.'; return; }
+    if(a!==b){ m.textContent='As senhas não conferem.'; return; }
+    btn.disabled=true; btn.textContent='Salvando…'; m.textContent='';
+    try{ await sbSenha(a); SB.definirSenha=false; await sbIniciar(); }
+    catch(err){ m.textContent=err.message; btn.disabled=false; btn.textContent='Salvar e entrar'; }
+  };
+}
 async function sbBoot(){
+  if(sbLerLink()){ render(); return; }
   let s=null; try{ s=JSON.parse(localStorage.getItem(SB_LS)); }catch(e){}
   if(!s||!s.refresh){ render(); return; }
   SB.tok=s.tok; SB.refresh=s.refresh; SB.exp=s.exp;
@@ -811,6 +850,7 @@ function resumoEtapasObra(obra){
 
 function render(){
   const el=document.getElementById('app');
+  if(SB.on && SB.definirSenha){ el.innerHTML=senhaView(); attachSenha(); return; }
   if(!SESSION.role){ el.innerHTML=loginView(); attachLogin(); return; }
   if(SB.on && SB.carregando){ el.innerHTML='<div style="padding:60px;text-align:center;color:var(--muted,#667);">Carregando seus dados…</div>'; return; }
   if(SB.on && SB.erro && !SYNC.initialized){ el.innerHTML=`<div style="padding:60px;text-align:center;"><p>Não foi possível carregar os dados.</p><p class="small" style="color:var(--bad);">${SB.erro}</p><button class="btn" id="sbTentar">Tentar de novo</button> <button class="btn secondary" id="sbSairErro">Sair</button></div>`; document.getElementById('sbTentar').onclick=async()=>{SB.erro='';SB.carregando=true;render();await sbCarregar(true);}; document.getElementById('sbSairErro').onclick=()=>sbSair(); return; }
@@ -819,19 +859,50 @@ function render(){
   attachSync();
   attachBaixas();
 }
+let CONVITE_ATUAL=null, CONVITE_EMAIL=null;
+function genSenha(){ const a='abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789'; const r=crypto.getRandomValues(new Uint32Array(10)); return Array.from(r,x=>a[x%a.length]).join(''); }
+function conviteTexto(c){
+  return 'Olá, '+(c.nome||'').split(' ')[0]+'! Você foi convidado(a) para o sistema financeiro da ET Engenharia e Projetos.\n\nAcesse: '+location.origin+location.pathname+'\nE-mail: '+c.email+'\nSenha inicial: '+c.senha+'\n\nNo primeiro acesso, troque a senha em "Alterar senha".';
+}
+function conviteBox(){
+  if(SB.on && CONVITE_EMAIL){ const c=CONVITE_EMAIL; return `<div class="card" style="border-color:var(--ok,#1a7f4b);"><h2>Convite enviado</h2><p class="small">Enviamos um e-mail para <b>${c.email}</b>. ${c.nome.split(' ')[0]} deve abrir o link, criar a senha e já entra no sistema. Se não chegar em alguns minutos, peça para olhar a caixa de spam.</p><button class="btn secondary" id="cvEmailFechar">Fechar</button></div>`; }
+  if(!SB.on || !CONVITE_ATUAL) return '';
+  const c=CONVITE_ATUAL;
+  return `<div class="card" style="border-color:var(--ok,#1a7f4b);"><h2>Convite pronto — ${c.nome}</h2>
+    <p class="small">O acesso foi criado. Copie a mensagem abaixo e envie ao colaborador. <b>A senha só aparece aqui agora</b>; depois de fechar, você pode gerar outra em "Redefinir senha".</p>
+    <textarea id="cvTexto" readonly rows="7" style="width:100%;">${conviteTexto(c).replace(/</g,'&lt;')}</textarea>
+    <div class="row-flex" style="margin-top:8px;"><button class="btn" id="cvCopiar">Copiar convite</button>
+      <button class="btn secondary" id="cvZap">Enviar por WhatsApp</button>
+      <button class="btn secondary" id="cvFechar">Fechar</button></div></div>`;
+}
+function convidarCard(){
+  if(!SB.on) return '';
+  return `<div class="card"><h2>Convidar colaborador</h2>
+    <p class="small">Cadastra a pessoa e cria o login dela.</p>
+    <div class="grid2">
+      <div class="field"><label>Nome</label><input type="text" id="cvNome" placeholder="Nome completo"></div>
+      <div class="field"><label>E-mail (será o login)</label><input type="email" id="cvEmail" placeholder="email@exemplo.com"></div>
+      <div class="field"><label>Cargo / função</label><input type="text" id="cvCargo" placeholder="Ex: Projetista Elétrico"></div>
+      <div class="field"><label>WhatsApp (opcional)</label><input type="text" id="cvTel" placeholder="(00) 00000-0000"></div>
+    </div>
+    <div class="row-flex" style="margin-top:10px;"><button class="btn" id="cvEmailBtn">Convidar por e-mail</button> <button class="btn secondary" id="cvConvidar">Gerar senha e convite manual</button></div>
+    <p class="small muted">Por e-mail: a pessoa recebe um link e define a própria senha. Manual: o sistema gera uma senha e você envia a mensagem (WhatsApp, por exemplo).</p>
+    <p class="small" id="cvMsg" style="min-height:18px;margin:8px 0 0;"></p></div>`;
+}
 function acessoBox(u){
   if(!SB.on) return '';
   const ac=(SB.acessos||[]).find(a=>a.colaborador_id===u.id);
   if(ac) return `<div class="card" style="background:var(--bg-soft,#f4f7fa);margin-top:10px;"><h3 style="margin:0 0 6px;">Acesso ao sistema</h3>
     <p class="small">✔ Tem login: <b>${ac.email}</b></p>
-    <div class="row-flex"><input type="text" class="acSenha" data-u="${u.id}" placeholder="Nova senha (mín. 8 caracteres)" style="min-width:230px;">
+    <div class="row-flex"><input type="text" class="acSenha" data-u="${u.id}" placeholder="Nova senha (vazio = gerar)" style="min-width:230px;">
       <button class="btn secondary acReset" data-u="${u.id}" data-e="${ac.email}">Redefinir senha</button>
+      <button class="btn secondary acMail" data-u="${u.id}" data-e="${ac.email}">Enviar link por e-mail</button>
       <button class="btn danger acDel" data-u="${u.id}" data-e="${ac.email}">Remover acesso</button></div>
     <p class="small acMsg" data-u="${u.id}"></p></div>`;
   return `<div class="card" style="background:var(--bg-soft,#f4f7fa);margin-top:10px;"><h3 style="margin:0 0 6px;">Acesso ao sistema</h3>
     <p class="small">Sem login ainda. Informe o e-mail e uma senha inicial e repasse ao colaborador; ele poderá trocá-la depois.</p>
     <div class="row-flex"><input type="text" class="acEmail" data-u="${u.id}" placeholder="E-mail de login" value="${u.email||''}" style="min-width:230px;">
-      <input type="text" class="acSenha" data-u="${u.id}" placeholder="Senha inicial (mín. 8 caracteres)" style="min-width:230px;">
+      <input type="text" class="acSenha" data-u="${u.id}" placeholder="Senha inicial (vazio = gerar)" style="min-width:230px;">
       <button class="btn acNovo" data-u="${u.id}">Criar acesso</button></div>
     <p class="small acMsg" data-u="${u.id}"></p></div>`;
 }
@@ -847,7 +918,7 @@ function loginView(){
         <label class="small">Senha</label>
         <input type="password" id="lgSenha" autocomplete="current-password" required style="width:100%;margin-bottom:12px;">
         <button class="btn" id="lgBtn" type="submit" style="width:100%;">Entrar</button>
-        <p class="small" id="lgMsg" style="color:var(--bad);min-height:18px;margin:10px 0 0;"></p>
+        <p class="small" id="lgMsg" style="color:var(--bad);min-height:18px;margin:10px 0 0;">${SB.aviso||''}</p>
         <p class="small muted">Esqueceu a senha? Peça ao administrador para redefinir.</p>
       </form>
     </div></div>`;
@@ -1983,7 +2054,7 @@ function colaboradoresView(){
         <span class="small">Saldo a pagar: <b class="${saldo>0.005?'neg':''}">${fmt(saldo)}</b></span>
       </div></div>`;
   }).join('');
-  return `<div class="card"><h2>Minhas empresas (CNPJ)</h2>
+  return `${conviteBox()}${convidarCard()}<div class="card"><h2>Minhas empresas (CNPJ)</h2>
       <p class="small">Cadastre seus CNPJs — na tela da obra você seleciona qual deles é a empresa contratada (para futuramente separar o faturamento por empresa).</p>
       ${empresasRows}
       <button class="btn secondary" id="addEmpresa" style="margin-top:10px;">+ Nova empresa</button>
@@ -2625,18 +2696,65 @@ function attachMain(){
 
   if(TAB==='colaboradores' && SESSION.role==='admin'){
     const acMsg=(u,t,ok)=>{ const el=document.querySelector('.acMsg[data-u="'+u+'"]'); if(el){ el.textContent=t; el.style.color=ok?'var(--ok,#1a7f4b)':'var(--bad)'; } };
+    const cvEF=document.getElementById('cvEmailFechar'); if(cvEF) cvEF.onclick=()=>{ CONVITE_EMAIL=null; render(); };
+    const cvC=document.getElementById('cvCopiar');
+    if(cvC){
+      cvC.onclick=async()=>{ const t=conviteTexto(CONVITE_ATUAL); try{ await navigator.clipboard.writeText(t); cvC.textContent='Copiado ✔'; }catch(e){ const ta=document.getElementById('cvTexto'); ta.select(); document.execCommand('copy'); cvC.textContent='Copiado ✔'; } };
+      document.getElementById('cvZap').onclick=()=>{ const tel=(CONVITE_ATUAL.tel||'').replace(/\D/g,''); const n=tel? (tel.length<=11?'55'+tel:tel):''; window.open('https://wa.me/'+n+'?text='+encodeURIComponent(conviteTexto(CONVITE_ATUAL)),'_blank'); };
+      document.getElementById('cvFechar').onclick=()=>{ CONVITE_ATUAL=null; render(); };
+    }
+    const cvE=document.getElementById('cvEmailBtn');
+    if(cvE) cvE.onclick=async()=>{
+      const msg=document.getElementById('cvMsg'), nome=document.getElementById('cvNome').value.trim(), email=document.getElementById('cvEmail').value.trim().toLowerCase(),
+            cargo=document.getElementById('cvCargo').value.trim(), tel=document.getElementById('cvTel').value.trim();
+      const erro=t=>{ msg.textContent=t; msg.style.color='var(--bad)'; };
+      if(!nome){ erro('Informe o nome.'); return; }
+      if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ erro('Informe um e-mail válido.'); return; }
+      if((SB.acessos||[]).some(a=>a.email===email)){ erro('Este e-mail já tem acesso.'); return; }
+      cvE.disabled=true; msg.style.color=''; msg.textContent='Enviando convite…';
+      const id='u'+Date.now();
+      DATA.colaboradores.push({id,nome,cargo,documento:'',telefone:tel,email,pix:'',dataInicio:''});
+      save(DATA);
+      try{ await sbAcesso('convidar',email,{colaboradorId:id,redirectTo:location.origin+location.pathname}); await sbRecarregarAcessos(); logAcao('Convite por e-mail enviado: '+nome); save(DATA); CONVITE_EMAIL={nome,email}; render(); }
+      catch(err){ cvE.disabled=false; erro('O colaborador foi cadastrado, mas o e-mail não foi enviado: '+err.message); render(); }
+    };
+    const cvB=document.getElementById('cvConvidar');
+    if(cvB) cvB.onclick=async()=>{
+      const msg=document.getElementById('cvMsg'), nome=document.getElementById('cvNome').value.trim(), email=document.getElementById('cvEmail').value.trim().toLowerCase(),
+            cargo=document.getElementById('cvCargo').value.trim(), tel=document.getElementById('cvTel').value.trim();
+      const erro=t=>{ msg.textContent=t; msg.style.color='var(--bad)'; };
+      if(!nome){ erro('Informe o nome.'); return; }
+      if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ erro('Informe um e-mail válido.'); return; }
+      if((SB.acessos||[]).some(a=>a.email===email)){ erro('Este e-mail já tem acesso.'); return; }
+      cvB.disabled=true; msg.style.color=''; msg.textContent='Criando acesso…';
+      const senha=genSenha(), id='u'+Date.now();
+      DATA.colaboradores.push({id,nome,cargo,documento:'',telefone:tel,email,pix:'',dataInicio:''});
+      save(DATA);
+      try{ await sbAcesso('criar',email,{senha,colaboradorId:id}); await sbRecarregarAcessos(); CONVITE_ATUAL={nome,email,senha,tel}; logAcao('Colaborador convidado: '+nome); save(DATA); render(); }
+      catch(err){ cvB.disabled=false; erro('O colaborador foi cadastrado, mas o acesso não foi criado: '+err.message+'. Abra o cadastro dele para tentar de novo.'); render(); }
+    };
     document.querySelectorAll('.acNovo').forEach(b=>b.onclick=async()=>{
-      const u=b.dataset.u, em=document.querySelector('.acEmail[data-u="'+u+'"]').value.trim().toLowerCase(), se=document.querySelector('.acSenha[data-u="'+u+'"]').value;
-      if(!em||se.length<8){ acMsg(u,'Informe o e-mail e uma senha com pelo menos 8 caracteres.'); return; }
+      const u=b.dataset.u, em=document.querySelector('.acEmail[data-u="'+u+'"]').value.trim().toLowerCase(); let se=document.querySelector('.acSenha[data-u="'+u+'"]').value;
+      if(!em||(se&&se.length<8)){ acMsg(u,'Informe o e-mail e, se digitar a senha, use pelo menos 8 caracteres.'); return; }
+      if(!se) se=genSenha();
       b.disabled=true; acMsg(u,'Criando…',true);
-      try{ await sbAcesso('criar',em,{senha:se,colaboradorId:u}); await sbRecarregarAcessos(); logAcao('Acesso criado para '+colabNome(u)); render(); }
+      try{ await sbAcesso('criar',em,{senha:se,colaboradorId:u}); await sbRecarregarAcessos(); const cc=DATA.colaboradores.find(x=>x.id===u)||{}; CONVITE_ATUAL={nome:cc.nome||'',email:em,senha:se,tel:cc.telefone||''}; logAcao('Acesso criado para '+colabNome(u)); render(); }
       catch(err){ b.disabled=false; acMsg(u,err.message); }
     });
     document.querySelectorAll('.acReset').forEach(b=>b.onclick=async()=>{
-      const u=b.dataset.u, se=document.querySelector('.acSenha[data-u="'+u+'"]').value;
-      if(se.length<8){ acMsg(u,'Digite a nova senha (mínimo 8 caracteres).'); return; }
-      try{ await sbAcesso('senha',b.dataset.e,{senha:se}); document.querySelector('.acSenha[data-u="'+u+'"]').value=''; acMsg(u,'Senha redefinida.',true); }
+      const u=b.dataset.u; let se=document.querySelector('.acSenha[data-u="'+u+'"]').value;
+      if(se&&se.length<8){ acMsg(u,'A senha precisa ter pelo menos 8 caracteres.'); return; }
+      const gerada=!se; if(!se) se=genSenha();
+      try{ await sbAcesso('senha',b.dataset.e,{senha:se}); document.querySelector('.acSenha[data-u="'+u+'"]').value='';
+        if(gerada){ const cc=DATA.colaboradores.find(x=>x.id===u)||{}; CONVITE_ATUAL={nome:cc.nome||'',email:b.dataset.e,senha:se,tel:cc.telefone||''}; render(); }
+        else acMsg(u,'Senha redefinida.',true); }
       catch(err){ acMsg(u,err.message); }
+    });
+    document.querySelectorAll('.acMail').forEach(b=>b.onclick=async()=>{
+      b.disabled=true; acMsg(b.dataset.u,'Enviando…',true);
+      try{ await sbAcesso('recuperar',b.dataset.e,{redirectTo:location.origin+location.pathname}); acMsg(b.dataset.u,'E-mail enviado para '+b.dataset.e+'.',true); }
+      catch(err){ acMsg(b.dataset.u,err.message); }
+      b.disabled=false;
     });
     document.querySelectorAll('.acDel').forEach(b=>b.onclick=async()=>{
       if(!confirm('Remover o acesso de '+b.dataset.e+'? O colaborador deixa de conseguir entrar.')) return;
