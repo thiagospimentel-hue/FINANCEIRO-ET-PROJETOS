@@ -156,20 +156,26 @@ td.num{white-space:nowrap;}
 const LS_KEY='financeiro_proto_v4';
 const hojeISO=()=>new Date().toISOString().slice(0,10);
 const novoId=p=>p+Date.now()+Math.random().toString(36).slice(2,6);
-const baixaTotal=it=>(it.baixas||[]).reduce((s,b)=>s+(b.valor||0),0);
+// Dinheiro sempre em centavos inteiros nas somas/comparações; arredondamento comercial (meio para cima) em 2 casas.
+const c2=v=>Math.round((Number(v)||0)*100+(v<0?-1e-9:1e-9));
+const r2=v=>c2(v)/100;
+const baixaTotal=it=>(it.baixas||[]).reduce((s,b)=>s+c2(b.valor),0)/100;
+const quemFez=()=>(typeof SB!=='undefined'&&SB.perfil&&SB.perfil.email)||'local';
+const esc=v=>String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const temValor=v=>v!==undefined&&v!==null;
 
 // ===== Sincronização com o banco compartilhado do artifact (db) =====
 // Cada obra e cada lançamento do caixa é um documento; tipos/colaboradores/empresas ficam em cfg/main.
 const PRE_KEY=LS_KEY+'_prenuvem';
 let LOADED_FROM_LS=false;
-const SYNC={state:'local',db:null,last:{},busy:false,timer:null,again:false,initialized:false,renderPending:false,retry:null,remote:{cfg:null,obras:{},caixa:{},contas:{}},got:{}};
-const SYNC_LABEL={local:'💾 Só neste navegador',saving:'☁ Salvando…',ok:'☁ Sincronizado',error:'⚠ Falha ao sincronizar'};
+const SYNC={state:'local',db:null,last:{},busy:false,timer:null,again:false,initialized:false,renderPending:false,retry:null,remote:{cfg:null,obras:{},caixa:{},contas:{}},got:{},pend:null,gen:0,lastF:{}};
+const SYNC_LABEL={local:'💾 Só neste navegador',saving:'☁ Salvando…',ok:'☁ Salvo',error:'⚠ Não salvou — tentando de novo',conflict:'⛔ Conflito de edição'};
 const canon=v=>JSON.stringify(v,(k,x)=>x&&typeof x==='object'&&!Array.isArray(x)?Object.keys(x).sort().reduce((a,key)=>(a[key]=x[key],a),{}):x);
 const safeId=s=>String(s).replace(/[^A-Za-z0-9_.~:@+-]/g,'_');
 function setSync(st,err){
   SYNC.state=st; if(err) console.warn('sync:',err&&err.code,err&&err.message);
-  const el=document.getElementById('syncChip'); if(el) el.textContent=SYNC_LABEL[st]||'';
+  const el=document.getElementById('syncChip'); if(el){ el.textContent=(SYNC_LABEL[st]||'')+((st==='error'||st==='conflict')&&SYNC.pend?' ('+SYNC.pend.ops.length+' alteração(ões) pendente(s))':''); el.style.cursor=st==='conflict'?'pointer':''; el.onclick=st==='conflict'?sbConflitoUI:null; }
+  if(st==='conflict') sbConflitoUI();
 }
 function docsFromData(d){
   const m={};
@@ -194,6 +200,7 @@ function syncSchedule(){
   SYNC.timer=setTimeout(()=>{SYNC.timer=null; syncFlush();},500);
 }
 async function syncFlush(){
+  if(SB.on) return sbFlush();
   if(SYNC.busy){ SYNC.again=true; return; }
   SYNC.busy=true; let falhou=false;
   try{
@@ -233,7 +240,7 @@ document.addEventListener('focusout',()=>{
   setTimeout(()=>{ const a=document.activeElement; if(SYNC.renderPending && !(a && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName))){ SYNC.renderPending=false; render(); } },80);
 });
 function syncApplyRemote(){
-  if(!SYNC.initialized||SYNC.busy||SYNC.timer||SYNC.again) return;
+  if(!SYNC.initialized||SYNC.busy||SYNC.timer||SYNC.again||SYNC.pend||SYNC.estado==='conflict') return;
   const m=incomingMap();
   if(sameMap(m,SYNC.last)){ if(SYNC.state==='saving') setSync('ok'); return; }
   SYNC.last=m; applyIncoming(m); setSync('ok'); syncRender();
@@ -249,6 +256,7 @@ function syncFirstLoad(){
     try{ localStorage.setItem(PRE_KEY, JSON.stringify(DATA)); }catch(e){}
   }
   SYNC.last=m; applyIncoming(m); setSync('ok'); render();
+  if(SB.on && SB.perfil && SB.perfil.role==='admin') syncSchedule();
 }
 async function startSync(){
   if(SB.on) return;
@@ -271,7 +279,19 @@ const SB_KEY='sb_publishable_hQ4B_2r_ibd8VYrK9qmqLg_S74fpeYw';
 const SB_LS='financeiro_sb_sessao';
 const SB={on: typeof claude==='undefined', tok:null, refresh:null, exp:0, perfil:null, acessos:[], poll:null, carregando:false, erro:''};
 function emptyData(){ return {tiposServico:[],colaboradores:[],minhasEmpresas:[],historico:[],incc:[],despesasFixas:[],obras:[],caixa:[],contas:[]}; }
-function sbSalvarSessao(){ try{ if(SB.tok) localStorage.setItem(SB_LS, JSON.stringify({tok:SB.tok,refresh:SB.refresh,exp:SB.exp})); else localStorage.removeItem(SB_LS); }catch(e){} }
+// Sessão: por padrão só vive na aba (sessionStorage). "Manter conectado" grava em localStorage. Inatividade encerra a sessão.
+function sbSalvarSessao(){
+  try{
+    const dado=SB.tok?JSON.stringify({tok:SB.tok,refresh:SB.refresh,exp:SB.exp,manter:!!SB.manter}):null;
+    const alvo=SB.manter?localStorage:sessionStorage, outro=SB.manter?sessionStorage:localStorage;
+    outro.removeItem(SB_LS);
+    if(dado) alvo.setItem(SB_LS,dado); else alvo.removeItem(SB_LS);
+  }catch(e){}
+}
+function sbLerSessao(){ for(const st of [sessionStorage,localStorage]){ try{ const j=JSON.parse(st.getItem(SB_LS)); if(j&&j.refresh) return j; }catch(e){} } return null; }
+let SB_ATIV=Date.now();
+['click','keydown','pointerdown','touchstart'].forEach(ev=>document.addEventListener(ev,()=>{SB_ATIV=Date.now();},{passive:true}));
+setInterval(()=>{ if(SB.on&&SB.tok&&SB.perfil){ const lim=SB.manter?12*3600e3:30*60e3; if(Date.now()-SB_ATIV>lim && !SYNC.pend && !SYNC.timer){ SB.aviso='Sessão encerrada por inatividade. Entre novamente.'; sbSair(); } } },30000);
 async function sbReq(path,opt={},semAuth){
   const h=Object.assign({apikey:SB_KEY,'Content-Type':'application/json'},opt.headers||{});
   h.Authorization='Bearer '+((!semAuth&&SB.tok)||SB_KEY);
@@ -307,39 +327,108 @@ async function sbIniciar(){
   SB.perfil=eu; SB.acessos=eu.role==='admin'?lista:[];
   SESSION= eu.role==='admin' ? {role:'admin'} : {role:'colab',userId:eu.colaborador_id};
   SB.carregando=true; render();
+  if(eu.role==='admin') SYNC.pend=sbLerPend();
   await sbCarregar(true);
   clearInterval(SB.poll); SB.poll=setInterval(()=>{ if(SESSION.role) sbCarregar(false); },20000);
 }
 async function sbBuscarDocs(){
-  if(SB.perfil.role==='colab'){
-    const r=await sbReq('/rest/v1/rpc/colab_dados',{method:'POST',body:'{}'}); if(!r.ok) throw await sbErro(r); return r.json();
-  }
   const out=[]; let ini=0;
   for(;;){
-    const r=await sbReq('/rest/v1/docs?select=path,data&order=path',{headers:{Range:ini+'-'+(ini+999),'Range-Unit':'items'}});
+    const r=await sbReq('/rest/v1/docs?select=path,data,versao&order=path',{headers:{Range:ini+'-'+(ini+999),'Range-Unit':'items'}});
     if(!r.ok) throw await sbErro(r);
     const lote=await r.json(); out.push(...lote); if(lote.length<1000) break; ini+=1000;
   }
   return out;
 }
-async function sbCarregar(primeira){
+async function sbBuscarFichas(){
+  const r=await sbReq('/rest/v1/colab_fichas?select=colaborador_id,data'); if(!r.ok) throw await sbErro(r); return r.json();
+}
+const fichaChave=f=>{ const x=Object.assign({},f); delete x.gerado_em; return canon(x); };
+// Colaborador: recebe SOMENTE a própria ficha (colab_dados valida no banco); nenhuma obra, contrato ou valor de terceiros.
+async function sbCarregarColab(){
   try{
-    const docs=await sbBuscarDocs(), r=SYNC.remote;
-    r.cfg=null; r.obras={}; r.caixa={}; r.contas={};
-    docs.forEach(d=>{ const c=canon(d.data);
+    const r=await sbReq('/rest/v1/rpc/colab_dados',{method:'POST',body:'{}'}); if(!r.ok) throw await sbErro(r);
+    const f=await r.json(); SB.ficha=f; SB.carregando=false; SB.erro='';
+    const novo=emptyData(); novo.colaboradores=[f.colaborador||{id:SESSION.userId,nome:'',cargo:''}]; ensureTiposPadrao(novo); DATA=novo;
+    SYNC.initialized=true; setSync('ok'); syncRender();
+  }catch(e){ SB.carregando=false; SB.erro=e.message; setSync('error',e); if(!SYNC.initialized) render(); }
+}
+async function sbCarregar(primeira,forcar){
+  if(SB.perfil.role==='colab') return sbCarregarColab();
+  const gen0=SYNC.gen;
+  try{
+    const docs=await sbBuscarDocs(); let fichas=null; if(primeira||forcar||!SYNC.initialized) fichas=await sbBuscarFichas();
+    // descarta consulta velha: houve gravação local enquanto esperávamos, ou a versão remota está atrás do que já gravamos
+    if(!forcar && SYNC.initialized && (SYNC.gen!==gen0 || SYNC.busy || SYNC.timer || SYNC.pend)) return;
+    if(!forcar && SYNC.initialized && docs.some(d=>(SB.ver[d.path]||0)>d.versao)) return;
+    const r=SYNC.remote; r.cfg=null; r.obras={}; r.caixa={}; r.contas={}; SB.ver={};
+    docs.forEach(d=>{ const c=canon(d.data); SB.ver[d.path]=d.versao;
       if(d.path==='cfg/main') r.cfg=c;
       else if(d.path.startsWith('obras/')) r.obras[d.path]=c;
       else if(d.path.startsWith('caixa/')) r.caixa[d.path]=c;
       else if(d.path.startsWith('contas/')) r.contas[d.path]=c; });
+    if(fichas){ SYNC.lastF={}; fichas.forEach(f=>{ SYNC.lastF[f.colaborador_id]=fichaChave(f.data); }); }
     SB.carregando=false; SB.erro='';
-    if(!SYNC.initialized){
-      if(SB.perfil.role==='admin') SYNC.db=sbDb();
-      syncFirstLoad();
-    } else syncApplyRemote();
+    if(forcar) SYNC.initialized=false;
+    if(!SYNC.initialized){ SYNC.db=SYNC.db||{}; syncFirstLoad(); }
+    else syncApplyRemote();
   }catch(e){
-    SB.carregando=false; SB.erro=e.message; setSync('error',e);
+    SB.carregando=false; SB.erro=e.message; if(SYNC.initialized) setSync('error',e); else setSync('error',e);
     if(primeira) render();
   }
+}
+// ---- gravação em lote (transação única no banco) com versão por documento e identificador de operação ----
+SB.ver={};
+const sbUuid=()=>(crypto.randomUUID?crypto.randomUUID():'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=Math.random()*16|0;return (c==='x'?r:(r&3|8)).toString(16);}));
+const PEND_KEY=()=>'financeiro_pend_'+(SB.uid||'');
+function sbGuardarPend(){ try{ if(SYNC.pend) localStorage.setItem(PEND_KEY(),JSON.stringify(SYNC.pend)); else localStorage.removeItem(PEND_KEY()); }catch(e){} }
+function sbLerPend(){ try{ const j=localStorage.getItem(PEND_KEY()); return j?JSON.parse(j):null; }catch(e){ return null; } }
+function sbFichasAtuais(){
+  const m={}; (DATA.colaboradores||[]).forEach(c=>{ m[c.id]=fichaDe(c.id); }); return m;
+}
+function sbMontarLote(){
+  const cur=docsFromData(DATA), ops=[], docs={}, dels=[], fich={};
+  Object.keys(cur).forEach(p=>{ if(SYNC.last[p]!==cur[p]){ ops.push({t:'doc',path:p,base:(p in SB.ver)?SB.ver[p]:null,data:JSON.parse(cur[p])}); docs[p]=cur[p]; } });
+  Object.keys(SYNC.last).forEach(p=>{ if(!(p in cur)){ ops.push({t:'doc',path:p,del:true,base:(p in SB.ver)?SB.ver[p]:null}); dels.push(p); } });
+  const fa=sbFichasAtuais();
+  Object.keys(fa).forEach(cid=>{ const k=fichaChave(fa[cid]); if(SYNC.lastF[cid]!==k){ ops.push({t:'ficha',cid,data:Object.assign({},fa[cid],{gerado_em:hojeISO()})}); fich[cid]=k; } });
+  Object.keys(SYNC.lastF).forEach(cid=>{ if(!(cid in fa)){ ops.push({t:'ficha',cid,del:true}); fich[cid]=null; } });
+  return {ops,docs,dels,fich};
+}
+async function sbEnviarLote(pe){
+  let r;
+  try{ r=await sbReq('/rest/v1/rpc/gravar_lote',{method:'POST',body:JSON.stringify({p_op:pe.op,p_ops:pe.ops})}); }
+  catch(e){ const er=new Error('Sem conexão com o servidor.'); er.rede=true; throw er; }
+  if(!r.ok){ const er=await sbErro(r); const m=/CONFLITO\|([^\s"]*)/.exec(er.message||''); if(m){ er.conflito=m[1].split(','); } throw er; }
+  return r.json();
+}
+async function sbFlush(){
+  if(SYNC.busy){ SYNC.again=true; return; }
+  if(SYNC.estado==='conflict') return;
+  SYNC.busy=true; let falhou=false;
+  try{
+    for(let volta=0;volta<30;volta++){
+      SYNC.again=false;
+      if(!SYNC.pend){
+        const l=sbMontarLote(); if(!l.ops.length) break;
+        SYNC.pend={op:sbUuid(),ops:l.ops,docs:l.docs,dels:l.dels,fich:l.fich}; sbGuardarPend();
+      }
+      setSync('saving');
+      const res=await sbEnviarLote(SYNC.pend), pe=SYNC.pend;
+      const v=(res&&res.versoes)||{};
+      Object.keys(pe.docs).forEach(p=>{ SYNC.last[p]=pe.docs[p]; if(v[p]!=null) SB.ver[p]=v[p]; sbRemoto(p,JSON.parse(pe.docs[p])); });
+      pe.dels.forEach(p=>{ delete SYNC.last[p]; delete SB.ver[p]; sbRemoto(p,null); });
+      Object.keys(pe.fich).forEach(c=>{ if(pe.fich[c]===null) delete SYNC.lastF[c]; else SYNC.lastF[c]=pe.fich[c]; });
+      SYNC.pend=null; sbGuardarPend(); SYNC.gen++;
+    }
+    setSync('ok');
+  }catch(e){
+    falhou=true;
+    if(e.conflito){ SYNC.estado='conflict'; SYNC.conflito=e.conflito; setSync('conflict',e); }
+    else { setSync('error',e); clearTimeout(SYNC.retry); SYNC.retry=setTimeout(()=>{ if(SYNC.db) syncSchedule(); },e.rede?8000:15000); }
+  }
+  SYNC.busy=false;
+  if(!falhou) syncApplyRemote();
 }
 function sbRemoto(p,obj){
   const r=SYNC.remote, c=obj==null?null:canon(obj);
@@ -347,12 +436,22 @@ function sbRemoto(p,obj){
   const m=p.startsWith('obras/')?r.obras:p.startsWith('caixa/')?r.caixa:p.startsWith('contas/')?r.contas:null;
   if(!m) return; if(c===null) delete m[p]; else m[p]=c;
 }
-function sbDb(){
-  return { doc:p=>({
-    set:async obj=>{ const r=await sbReq('/rest/v1/docs?on_conflict=path',{method:'POST',headers:{Prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify({path:p,collection:p.split('/')[0],data:obj,updated_at:new Date().toISOString()})}); if(!r.ok) throw await sbErro(r); sbRemoto(p,obj); },
-    delete:async ()=>{ const r=await sbReq('/rest/v1/docs?path=eq.'+encodeURIComponent(p),{method:'DELETE'}); if(!r.ok) throw await sbErro(r); sbRemoto(p,null); }
-  }) };
+function sbConflitoUI(){
+  if(document.getElementById('sbConflito')) return;
+  const d=document.createElement('div'); d.id='sbConflito';
+  d.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;';
+  d.innerHTML='<div style="background:#fff;color:#222;max-width:520px;border-radius:10px;padding:22px;font:14px/1.45 system-ui,sans-serif;"><h3 style="margin:0 0 8px;">Conflito de edição</h3><p>Outra pessoa (ou outra aba) alterou os mesmos dados enquanto você editava. Para não sobrescrever o trabalho dela, <b>suas alterações ainda não foram gravadas</b>.</p><p class="small" id="sbConfDet" style="color:#666;"></p><p>Baixe uma cópia das suas alterações e depois carregue a versão atual do servidor. Em seguida, refaça o que faltar.</p><div style="display:flex;gap:8px;flex-wrap:wrap;"><button id="sbConfBaixar" class="btn secondary">1. Baixar minhas alterações</button><button id="sbConfCarregar" class="btn">2. Carregar versão do servidor</button></div></div>';
+  document.body.appendChild(d);
+  d.querySelector('#sbConfDet').textContent='Documentos em conflito: '+((SYNC.conflito||[]).join(', ')||'—');
+  d.querySelector('#sbConfBaixar').onclick=()=>{ try{ const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([JSON.stringify(DATA,null,2)],{type:'application/json'})); a.download='financeiro-minhas-alteracoes-'+new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')+'.json'; a.click(); }catch(e){} };
+  d.querySelector('#sbConfCarregar').onclick=async()=>{
+    SYNC.pend=null; sbGuardarPend(); SYNC.estado=''; SYNC.conflito=null; clearTimeout(SYNC.timer); SYNC.timer=null;
+    d.remove(); setSync('saving'); await sbCarregar(true,true);
+  };
 }
+window.addEventListener('beforeunload',e=>{
+  if(SB.on && SB.perfil && (SYNC.timer||SYNC.busy||SYNC.pend||SYNC.estado==='conflict')){ e.preventDefault(); e.returnValue='Há alterações ainda não salvas.'; return e.returnValue; }
+});
 async function sbMarcarEntrega(obraId,mi,ei,concluido){
   const r=await sbReq('/rest/v1/rpc/marcar_entrega',{method:'POST',body:JSON.stringify({p_obra:safeId(obraId),p_mi:+mi,p_ei:+ei,p_concluido:!!concluido})});
   if(!r.ok) throw await sbErro(r);
@@ -360,7 +459,14 @@ async function sbMarcarEntrega(obraId,mi,ei,concluido){
 async function sbSenha(nova){
   const r=await sbReq('/auth/v1/user',{method:'PUT',body:JSON.stringify({password:nova})}); if(!r.ok) throw await sbErro(r);
 }
+async function sbGarantirSalvo(){
+  clearTimeout(SYNC.timer); SYNC.timer=null;
+  await sbFlush();
+  for(let i=0;i<200&&SYNC.busy;i++) await new Promise(r=>setTimeout(r,100));
+  if(SYNC.pend||SYNC.state!=='ok') throw new Error('Não foi possível salvar o cadastro antes de continuar. Verifique a conexão e tente de novo.');
+}
 async function sbAcesso(acao,email,extra){
+  if(acao==='criar'||acao==='convidar') await sbGarantirSalvo();   // o servidor confere se o colaborador já existe no cadastro
   const r=await sbReq('/functions/v1/gerenciar-acesso',{method:'POST',body:JSON.stringify(Object.assign({acao,email},extra||{}))});
   const j=await r.json().catch(()=>({})); if(!r.ok) throw new Error(j.erro||('Erro '+r.status)); return j;
 }
@@ -369,7 +475,7 @@ async function sbSair(silencioso){
   try{ if(SB.tok) await fetch(SB_URL+'/auth/v1/logout',{method:'POST',headers:{apikey:SB_KEY,Authorization:'Bearer '+SB.tok}}); }catch(e){}
   clearInterval(SB.poll); clearTimeout(SYNC.timer); clearTimeout(SYNC.retry);
   SB.tok=null; SB.refresh=null; SB.perfil=null; SB.acessos=[]; sbSalvarSessao();
-  Object.assign(SYNC,{db:null,last:{},busy:false,timer:null,again:false,initialized:false,renderPending:false,retry:null,remote:{cfg:null,obras:{},caixa:{},contas:{}},got:{}});
+  Object.assign(SYNC,{db:null,last:{},busy:false,timer:null,again:false,initialized:false,renderPending:false,retry:null,remote:{cfg:null,obras:{},caixa:{},contas:{}},got:{},pend:null,gen:0,lastF:{},estado:'',conflito:null}); SB.ver={}; SB.ficha=null;
   DATA=emptyData(); ensureTiposPadrao(DATA); SESSION={role:null,userId:null}; TAB='dashboard';
   if(!silencioso) render();
 }
@@ -407,9 +513,9 @@ function attachSenha(){
 }
 async function sbBoot(){
   if(sbLerLink()){ render(); return; }
-  let s=null; try{ s=JSON.parse(localStorage.getItem(SB_LS)); }catch(e){}
+  const s=sbLerSessao();
   if(!s||!s.refresh){ render(); return; }
-  SB.tok=s.tok; SB.refresh=s.refresh; SB.exp=s.exp;
+  SB.manter=!!s.manter; SB.tok=s.tok; SB.refresh=s.refresh; SB.exp=s.exp;
   try{
     if(Date.now()>SB.exp-60000 && !(await sbRenovar())) throw new Error('sessão expirada');
     await sbIniciar();
@@ -706,7 +812,7 @@ function equipeTotalObra(obra){
   return (obra.equipe||[]).reduce((s,m)=>s+equipeMembroValor(obra,m),0);
 }
 // Despesas da obra (ART, lista de materiais...): % do líquido total da obra OU valor fixo editado à mão.
-function despObraValor(obra,d){ return d.modo==='valor' ? (d.valor||0) : liquidoTotalObra(obra)*((d.pct||0)/100); }
+function despObraValor(obra,d){ return r2(d.modo==='valor' ? (d.valor||0) : liquidoTotalObra(obra)*((d.pct||0)/100)); }
 function despObraPct(obra,d){ if(d.modo==='valor'){ const b=liquidoTotalObra(obra); return b? (d.valor||0)/b*100 : 0; } return d.pct||0; }
 function despesasObraTotal(obra){ return (obra.despesasObra||[]).reduce((a,d)=>a+despObraValor(obra,d),0); }
 function calcObra(obra){
@@ -756,8 +862,8 @@ function recalcReajustes(obra){
 
 // ---- Baixas / valores congelados ----
 function valorEtapaContrato(obra,e){
-  if(temValor(e.valorFixo)) return e.valorFixo;
-  return valorContratoBase(obra)*((e.pct||0)/100);
+  if(temValor(e.valorFixo)) return r2(e.valorFixo);
+  return r2(valorContratoBase(obra)*((e.pct||0)/100));
 }
 // Congela o valor da etapa quando há NF emitida ou recebimento; recalcula os campos derivados pago/data.
 function sincEtapaContrato(obra,e){
@@ -769,7 +875,7 @@ function sincEtapaContrato(obra,e){
   e.data = e.pago ? (ds[ds.length-1]||'') : '';
 }
 function valorEquipeEtapa(obra,m,e){
-  return temValor(e.valorFixo) ? e.valorFixo : equipeMembroValor(obra,m)*((e.pct||0)/100);
+  return r2(temValor(e.valorFixo) ? e.valorFixo : equipeMembroValor(obra,m)*((e.pct||0)/100));
 }
 function equipeSituacao(e,valor){
   const pago=baixaTotal(e);
@@ -786,23 +892,46 @@ function logAcao(txt){
   DATA.historico.unshift({id:novoId('h'),quando:new Date().toISOString(),txt});
   if(DATA.historico.length>300) DATA.historico.length=300;
 }
+const BX_ULT={};
 function lancarBaixa(item,{valor,data,tipo,desc,obraId,colaboradorId,origem,empresaId}){
+  valor=r2(valor);
+  if(!(valor>0)) return null;                                   // nunca lança valor zero ou negativo
+  const chave=(origem&&origem.refId||item.id||'')+'|'+valor+'|'+data, agora=Date.now();
+  if(BX_ULT[chave] && agora-BX_ULT[chave]<2500) return null;       // clique repetido / reenvio imediato
+  BX_ULT[chave]=agora;
   const movId=novoId('m');
-  const mv={id:movId,data,desc,tipo,valor,obraId:obraId||'',colaboradorId:colaboradorId||'',origem};
+  const mv={id:movId,data,desc,tipo,valor,obraId:obraId||'',colaboradorId:colaboradorId||'',origem,criadoPor:quemFez(),criadoEm:new Date().toISOString()};
   if(!obraId && empresaId) mv.empresaId=empresaId;
-  DATA.caixa.push(mv);
+  DATA.caixa.push(mv);                                          // baixa e caixa nascem juntas e são gravadas no mesmo lote (transação)
   item.baixas=item.baixas||[];
-  item.baixas.push({id:novoId('b'),data,valor,movId});
+  item.baixas.push({id:novoId('b'),data,valor,movId,por:quemFez()});
+  return item.baixas[item.baixas.length-1];
 }
-function desfazerBaixa(item,baixaId){
+let _mot={t:0,v:''};
+function motivoEstorno(){
+  if(Date.now()-_mot.t<4000) return _mot.v;
+  let v=''; try{ v=(prompt('Motivo do estorno (obrigatório):')||'').trim(); }catch(e){ v='Estorno (sem diálogo disponível)'; }
+  if(!v) return null; _mot={t:Date.now(),v}; return v;
+}
+// Estorno identificado: a baixa sai da soma, mas fica registrada (quem, quando, motivo) e o caixa recebe um lançamento inverso.
+function desfazerBaixa(item,baixaId,motivo){
   const b=(item.baixas||[]).find(x=>x.id===baixaId); if(!b) return null;
-  if(b.movId) DATA.caixa=DATA.caixa.filter(m=>m.id!==b.movId);
+  if(motivo===undefined) motivo=motivoEstorno();
+  if(!motivo) return null;
+  const est=Object.assign({},b,{estornadoEm:new Date().toISOString(),estornadoPor:quemFez(),motivo});
+  const mv=b.movId&&DATA.caixa.find(m=>m.id===b.movId);
+  if(mv){
+    const rev={id:novoId('m'),data:hojeISO(),desc:'Estorno — '+(mv.desc||''),tipo:mv.tipo==='entrada'?'saida':'entrada',valor:mv.valor,obraId:mv.obraId||'',colaboradorId:mv.colaboradorId||'',origem:Object.assign({},mv.origem||{},{estorno:true}),estornoDe:mv.id,motivo,criadoPor:quemFez(),criadoEm:new Date().toISOString()};
+    if(mv.empresaId) rev.empresaId=mv.empresaId;
+    DATA.caixa.push(rev); est.estornoMovId=rev.id;
+  }
   item.baixas=item.baixas.filter(x=>x.id!==baixaId);
+  item.estornos=item.estornos||[]; item.estornos.push(est);
   return b;
 }
 function realizadoObra(obraId){
   let entradas=0,saidas=0;
-  DATA.caixa.forEach(m=>{ if(m.obraId===obraId){ if(m.tipo==='entrada') entradas+=m.valor; else saidas+=m.valor; } });
+  DATA.caixa.forEach(m=>{ if(m.obraId===obraId){ const k=m.estornoDe?-1:1; if((m.tipo==='entrada')===!m.estornoDe) entradas+=k*m.valor; else saidas+=k*m.valor; } });
   return {entradas,saidas,liquido:entradas-saidas};
 }
 
@@ -853,7 +982,7 @@ function render(){
   if(SB.on && SB.definirSenha){ el.innerHTML=senhaView(); attachSenha(); return; }
   if(!SESSION.role){ el.innerHTML=loginView(); attachLogin(); return; }
   if(SB.on && SB.carregando){ el.innerHTML='<div style="padding:60px;text-align:center;color:var(--muted,#667);">Carregando seus dados…</div>'; return; }
-  if(SB.on && SB.erro && !SYNC.initialized){ el.innerHTML=`<div style="padding:60px;text-align:center;"><p>Não foi possível carregar os dados.</p><p class="small" style="color:var(--bad);">${SB.erro}</p><button class="btn" id="sbTentar">Tentar de novo</button> <button class="btn secondary" id="sbSairErro">Sair</button></div>`; document.getElementById('sbTentar').onclick=async()=>{SB.erro='';SB.carregando=true;render();await sbCarregar(true);}; document.getElementById('sbSairErro').onclick=()=>sbSair(); return; }
+  if(SB.on && SB.erro && !SYNC.initialized){ el.innerHTML=`<div style="padding:60px;text-align:center;"><p>Não foi possível carregar os dados.</p><p class="small" style="color:var(--bad);">${esc(SB.erro)}</p><button class="btn" id="sbTentar">Tentar de novo</button> <button class="btn secondary" id="sbSairErro">Sair</button></div>`; document.getElementById('sbTentar').onclick=async()=>{SB.erro='';SB.carregando=true;render();await sbCarregar(true);}; document.getElementById('sbSairErro').onclick=()=>sbSair(); return; }
   el.innerHTML=mainView();
   attachMain();
   attachSync();
@@ -865,12 +994,12 @@ function conviteTexto(c){
   return 'Olá, '+(c.nome||'').split(' ')[0]+'! Você foi convidado(a) para o sistema financeiro da ET Engenharia e Projetos.\n\nAcesse: '+location.origin+location.pathname+'\nE-mail: '+c.email+'\nSenha inicial: '+c.senha+'\n\nNo primeiro acesso, troque a senha em "Alterar senha".';
 }
 function conviteBox(){
-  if(SB.on && CONVITE_EMAIL){ const c=CONVITE_EMAIL; return `<div class="card" style="border-color:var(--ok,#1a7f4b);"><h2>Convite enviado</h2><p class="small">Enviamos um e-mail para <b>${c.email}</b>. ${c.nome.split(' ')[0]} deve abrir o link, criar a senha e já entra no sistema. Se não chegar em alguns minutos, peça para olhar a caixa de spam.</p><button class="btn secondary" id="cvEmailFechar">Fechar</button></div>`; }
+  if(SB.on && CONVITE_EMAIL){ const c=CONVITE_EMAIL; return `<div class="card" style="border-color:var(--ok,#1a7f4b);"><h2>Convite enviado</h2><p class="small">Enviamos um e-mail para <b>${esc(c.email)}</b>. ${esc(c.nome.split(' ')[0])} deve abrir o link, criar a senha e já entra no sistema. Se não chegar em alguns minutos, peça para olhar a caixa de spam.</p><button class="btn secondary" id="cvEmailFechar">Fechar</button></div>`; }
   if(!SB.on || !CONVITE_ATUAL) return '';
   const c=CONVITE_ATUAL;
-  return `<div class="card" style="border-color:var(--ok,#1a7f4b);"><h2>Convite pronto — ${c.nome}</h2>
+  return `<div class="card" style="border-color:var(--ok,#1a7f4b);"><h2>Convite pronto — ${esc(c.nome)}</h2>
     <p class="small">O acesso foi criado. Copie a mensagem abaixo e envie ao colaborador. <b>A senha só aparece aqui agora</b>; depois de fechar, você pode gerar outra em "Redefinir senha".</p>
-    <textarea id="cvTexto" readonly rows="7" style="width:100%;">${conviteTexto(c).replace(/</g,'&lt;')}</textarea>
+    <textarea id="cvTexto" readonly rows="7" style="width:100%;">${esc(conviteTexto(c))}</textarea>
     <div class="row-flex" style="margin-top:8px;"><button class="btn" id="cvCopiar">Copiar convite</button>
       <button class="btn secondary" id="cvZap">Enviar por WhatsApp</button>
       <button class="btn secondary" id="cvFechar">Fechar</button></div></div>`;
@@ -893,18 +1022,18 @@ function acessoBox(u){
   if(!SB.on) return '';
   const ac=(SB.acessos||[]).find(a=>a.colaborador_id===u.id);
   if(ac) return `<div class="card" style="background:var(--bg-soft,#f4f7fa);margin-top:10px;"><h3 style="margin:0 0 6px;">Acesso ao sistema</h3>
-    <p class="small">✔ Tem login: <b>${ac.email}</b></p>
-    <div class="row-flex"><input type="text" class="acSenha" data-u="${u.id}" placeholder="Nova senha (vazio = gerar)" style="min-width:230px;">
-      <button class="btn secondary acReset" data-u="${u.id}" data-e="${ac.email}">Redefinir senha</button>
-      <button class="btn secondary acMail" data-u="${u.id}" data-e="${ac.email}">Enviar link por e-mail</button>
-      <button class="btn danger acDel" data-u="${u.id}" data-e="${ac.email}">Remover acesso</button></div>
-    <p class="small acMsg" data-u="${u.id}"></p></div>`;
+    <p class="small">✔ Tem login: <b>${esc(ac.email)}</b></p>
+    <div class="row-flex"><input type="text" class="acSenha" data-u="${esc(u.id)}" placeholder="Nova senha (vazio = gerar)" style="min-width:230px;">
+      <button class="btn secondary acReset" data-u="${esc(u.id)}" data-e="${esc(ac.email)}">Redefinir senha</button>
+      <button class="btn secondary acMail" data-u="${esc(u.id)}" data-e="${esc(ac.email)}">Enviar link por e-mail</button>
+      <button class="btn danger acDel" data-u="${esc(u.id)}" data-e="${esc(ac.email)}">Remover acesso</button></div>
+    <p class="small acMsg" data-u="${esc(u.id)}"></p></div>`;
   return `<div class="card" style="background:var(--bg-soft,#f4f7fa);margin-top:10px;"><h3 style="margin:0 0 6px;">Acesso ao sistema</h3>
     <p class="small">Sem login ainda. Informe o e-mail e uma senha inicial e repasse ao colaborador; ele poderá trocá-la depois.</p>
-    <div class="row-flex"><input type="text" class="acEmail" data-u="${u.id}" placeholder="E-mail de login" value="${u.email||''}" style="min-width:230px;">
-      <input type="text" class="acSenha" data-u="${u.id}" placeholder="Senha inicial (vazio = gerar)" style="min-width:230px;">
-      <button class="btn acNovo" data-u="${u.id}">Criar acesso</button></div>
-    <p class="small acMsg" data-u="${u.id}"></p></div>`;
+    <div class="row-flex"><input type="text" class="acEmail" data-u="${esc(u.id)}" placeholder="E-mail de login" value="${esc(u.email||'')}" style="min-width:230px;">
+      <input type="text" class="acSenha" data-u="${esc(u.id)}" placeholder="Senha inicial (vazio = gerar)" style="min-width:230px;">
+      <button class="btn acNovo" data-u="${esc(u.id)}">Criar acesso</button></div>
+    <p class="small acMsg" data-u="${esc(u.id)}"></p></div>`;
 }
 function loginView(){
   if(SB.on) return `<div class="loginpage">
@@ -917,12 +1046,13 @@ function loginView(){
         <input type="email" id="lgEmail" autocomplete="username" required style="width:100%;margin-bottom:10px;">
         <label class="small">Senha</label>
         <input type="password" id="lgSenha" autocomplete="current-password" required style="width:100%;margin-bottom:12px;">
+        <label class="small" style="display:flex;gap:6px;align-items:center;margin:0 0 10px;"><input type="checkbox" id="lgManter"> Manter conectado neste computador</label>
         <button class="btn" id="lgBtn" type="submit" style="width:100%;">Entrar</button>
-        <p class="small" id="lgMsg" style="color:var(--bad);min-height:18px;margin:10px 0 0;">${SB.aviso||''}</p>
+        <p class="small" id="lgMsg" style="color:var(--bad);min-height:18px;margin:10px 0 0;">${esc(SB.aviso||'')}</p>
         <p class="small muted">Esqueceu a senha? Peça ao administrador para redefinir.</p>
       </form>
     </div></div>`;
-  const opts=DATA.colaboradores.map(u=>`<option value="${u.id}">${u.nome}</option>`).join('');
+  const opts=DATA.colaboradores.map(u=>`<option value="${esc(u.id)}">${esc(u.nome)}</option>`).join('');
   return `<div class="loginpage">
     <div class="loginbrand"><img src="${LOGO_ET}" alt="ET Engenharia e Projetos" style="width:170px;margin-bottom:28px;"><h1>Financeiro</h1><p>Obras, cobranças, caixa e pagamentos da equipe em um só lugar — no lugar das planilhas.</p></div>
     <div class="loginform">
@@ -944,6 +1074,7 @@ function attachLogin(){
       e.preventDefault();
       const b=document.getElementById('lgBtn'), m=document.getElementById('lgMsg');
       b.disabled=true; b.textContent='Entrando…'; m.textContent='';
+      SB.manter=document.getElementById('lgManter').checked;
       try{ await sbEntrar(document.getElementById('lgEmail').value.trim().toLowerCase(), document.getElementById('lgSenha').value); }
       catch(err){ m.textContent=err.message; b.disabled=false; b.textContent='Entrar'; }
     };
@@ -995,9 +1126,9 @@ function mainView(){
       <button class="btn" id="enviarLocal">Enviar os dados deste navegador para a nuvem</button> <button class="btn secondary" id="descartarLocal">Descartar, manter os da nuvem</button>
     </div>`; }catch(e){} }
   const info=admin?(TAB_INFO[TAB]||TAB_INFO.colaboradores):['Meus pagamentos','Etapas, aprovações e valores a receber'];
-  const foot=`<div class="side-foot"><div class="user">${nome||''}</div><span id="syncChip">${SYNC_LABEL[SYNC.state]||''}</span>${adminTools}${SB.on?'<button id="alterarSenha">Alterar senha</button>':''}<button id="logout">Sair</button></div>`;
+  const foot=`<div class="side-foot"><div class="user">${esc(nome||'')}</div><span id="syncChip">${SYNC_LABEL[SYNC.state]||''}</span>${adminTools}${SB.on?'<button id="alterarSenha">Alterar senha</button>':''}<button id="logout">Sair</button></div>`;
   const side=`<aside class="side"><div class="brand"><img src="${LOGO_ET}" alt="ET Engenharia e Projetos"><span>Financeiro · gestão de obras e caixa</span></div>${tabsHtml}${foot}</aside>`;
-  const head=`<div class="pagehead"><div><h1>${info[0]}</h1><div class="sub">${info[1]}</div></div>${admin?'':`<div class="who"><span id="syncChip">${SYNC_LABEL[SYNC.state]||''}</span> ${nome||''} ${SB.on?'<button id="alterarSenha">Alterar senha</button>':''}<button id="logout">Sair</button></div>`}</div>`;
+  const head=`<div class="pagehead"><div><h1>${info[0]}</h1><div class="sub">${info[1]}</div></div>${admin?'':`<div class="who"><span id="syncChip">${SYNC_LABEL[SYNC.state]||''}</span> ${esc(nome||'')} ${SB.on?'<button id="alterarSenha">Alterar senha</button>':''}<button id="logout">Sair</button></div>`}</div>`;
   return `<div class="shell ${admin?'':'nosidebar'}">${admin?side:''}<div class="main">${head}<div class="wrap">${banner}${empresaFiltroBar()}${body}</div></div></div>`;
 }
 function resolverBaixa(k,a,b,c){
@@ -1035,9 +1166,11 @@ function attachBaixas(){
       saldo=(r.item.valor||0)-baixaTotal(r.item);
       base={tipo:'saida',desc:'Pagamento — '+r.item.desc,obraId:r.item.obraId||'',empresaId:r.item.empresaId||'',origem:{tipo:'conta',obraId:r.item.obraId||'',refId:r.item.id}};
     }
-    valor=Math.min(valor,saldo);
-    if(!(valor>0.004)) return;
-    lancarBaixa(r.item,{...base,valor,data:iso});
+    valor=r2(valor); saldo=r2(saldo);
+    const campoV=box.querySelector('.bxVal');
+    if(!(valor>0)){ campoV.style.borderColor='var(--bad)'; campoV.title='Informe um valor maior que zero.'; return; }
+    if(c2(valor)>c2(saldo)){ campoV.style.borderColor='var(--bad)'; campoV.title='O valor é maior que o saldo ('+fmt(saldo)+').'; alert('O valor informado ('+fmt(valor)+') é maior que o saldo em aberto ('+fmt(saldo)+').'); return; }
+    if(!lancarBaixa(r.item,{...base,valor,data:iso})) return;
     if(k==='etapa') sincEtapaContrato(r.obra,r.item);
     logAcao((base.tipo==='entrada'?'Recebimento':'Pagamento')+' de '+fmt(valor)+' — '+base.desc.replace(/^(Recebimento|Pagamento) — /,''));
     save(DATA); render();
@@ -1045,6 +1178,7 @@ function attachBaixas(){
   document.querySelectorAll('.bxDel').forEach(btn=>btn.onclick=()=>{
     const k=btn.dataset.k, r=resolverBaixa(k,btn.dataset.a,btn.dataset.b,btn.dataset.c); if(!r) return;
     const b=desfazerBaixa(r.item,btn.dataset.bx); if(!b) return;
+    logAcao('Estorno de '+fmt(b.valor)+' — motivo: '+_mot.v);
     if(k==='etapa') sincEtapaContrato(r.obra,r.item);
     logAcao('Baixa desfeita de '+fmt(b.valor)+(k==='etapa'?' — '+r.obra.nomeObra+' — '+r.item.nome:''));
     save(DATA); render();
@@ -1077,16 +1211,16 @@ function attachSync(){
 }
 
 function colabOptions(selectedId){
-  return DATA.colaboradores.map(u=>`<option value="${u.id}" ${u.id===selectedId?'selected':''}>${u.nome}</option>`).join('');
+  return DATA.colaboradores.map(u=>`<option value="${esc(u.id)}" ${u.id===selectedId?'selected':''}>${esc(u.nome)}</option>`).join('');
 }
 function empresaOptions(selectedId){
-  const opts=DATA.minhasEmpresas.map(e=>`<option value="${e.id}" ${e.id===selectedId?'selected':''}>${e.nome}${e.cnpj?' — '+e.cnpj:''}</option>`).join('');
+  const opts=DATA.minhasEmpresas.map(e=>`<option value="${esc(e.id)}" ${e.id===selectedId?'selected':''}>${esc(e.nome)}${e.cnpj?' — '+esc(e.cnpj):''}</option>`).join('');
   return `<option value="">— selecione —</option>${opts}`;
 }
 function baseChecksHtml(obra,m,mi){
   const baseIds=m.baseIds||[];
   return obra.servicos.map(s=>`<label class="small" style="display:inline-flex;align-items:center;gap:3px;margin-right:10px;white-space:nowrap;">
-      <input type="checkbox" class="equipebasechk" data-o="${obra.id}" data-i="${mi}" data-s="${s.id}" ${baseIds.includes(s.id)?'checked':''}> ${tipoNome(s.tipoId)}
+      <input type="checkbox" class="equipebasechk" data-o="${esc(obra.id)}" data-i="${mi}" data-s="${esc(s.id)}" ${baseIds.includes(s.id)?'checked':''}> ${esc(tipoNome(s.tipoId))}
     </label>`).join('');
 }
 
@@ -1116,8 +1250,9 @@ function indicadoresFinanceiros(){
   const hoje=hojeISO(), mes=hoje.slice(0,7);
   let entradas=0, saidas=0, recebidoMes=0, pagoMes=0;
   DATA.caixa.filter(movVisivel).forEach(m=>{
-    if(m.tipo==='entrada'){ entradas+=m.valor; if((m.data||'').startsWith(mes)) recebidoMes+=m.valor; }
-    else { saidas+=m.valor; if((m.data||'').startsWith(mes)) pagoMes+=m.valor; }
+    const k=m.estornoDe?-1:1;   // estorno abate da mesma categoria que corrige (não aparece como receita/despesa nova)
+    if((m.tipo==='entrada')===!m.estornoDe){ entradas+=k*m.valor; if((m.data||'').startsWith(mes)) recebidoMes+=k*m.valor; }
+    else { saidas+=k*m.valor; if((m.data||'').startsWith(mes)) pagoMes+=k*m.valor; }
   });
   let aReceber=0, aFaturar=0, vencidoReceber=0;
   const entradasPrev={}; // mes -> valor (saldo de etapas por vencimento)
@@ -1173,7 +1308,7 @@ function fluxoProjetadoCard(ind){
   return `<div class="card"><h2>Fluxo de caixa projetado</h2>
     <p class="small">Parte do saldo atual em caixa (${fmt(ind.saldoCaixa)}). Entradas = etapas com NF ou vencimento ainda não recebidas; saídas = contas a pagar e equipe aprovada (use “Pagar até” na aba Colaboradores para datar; sem data fica em “Sem data”). Etapas sem NF nem vencimento ficam fora (ver “A faturar”).</p>
     <div style="overflow-x:auto;"><table><tr><th>Período</th><th class="num">Entradas previstas</th><th class="num">Saídas previstas</th><th class="num">Saldo do período</th><th class="num">Saldo acumulado</th></tr>
-    ${linhas.map(l=>`<tr><td>${l.label}</td><td class="num pos">${fmt(l.e)}</td><td class="num neg">${fmt(l.sd)}</td><td class="num ${l.e-l.sd>=0?'pos':'neg'}">${fmt(l.e-l.sd)}</td><td class="num ${l.acum>=0?'pos':'neg'}">${fmt(l.acum)}</td></tr>`).join('') || '<tr><td colspan="5" class="small">Nada previsto.</td></tr>'}
+    ${linhas.map(l=>`<tr><td>${esc(l.label)}</td><td class="num pos">${fmt(l.e)}</td><td class="num neg">${fmt(l.sd)}</td><td class="num ${l.e-l.sd>=0?'pos':'neg'}">${fmt(l.e-l.sd)}</td><td class="num ${l.acum>=0?'pos':'neg'}">${fmt(l.acum)}</td></tr>`).join('') || '<tr><td colspan="5" class="small">Nada previsto.</td></tr>'}
     </table></div></div>`;
 }
 function dashboardView(){
@@ -1196,7 +1331,7 @@ function dashboardView(){
     const larg = Math.max(0,Math.min(100, lucroPct));
     return `<div class="rankcard">
       <div>
-        <b>${obra.nomeObra}</b> <span class="small">${obra.codigo||''}</span> <span class="badge badge-${obra.status||'andamento'}">${STATUS_LABEL[obra.status]||obra.status}</span>
+        <b>${esc(obra.nomeObra)}</b> <span class="small">${esc(obra.codigo||'')}</span> <span class="badge badge-${obra.status||'andamento'}">${STATUS_LABEL[obra.status]||obra.status}</span>
         <div class="barwrap" style="width:220px;"><div class="barfill" style="width:${larg}%;"></div></div>
         <div class="small">Realizado: recebido ${fmt(real.entradas)} − pago ${fmt(real.saidas)} = <b class="${real.liquido>=0?'pos':'neg'}">${fmt(real.liquido)}</b></div>
       </div>
@@ -1302,8 +1437,8 @@ function faturamentoDashboardCard(){
           : '<span class="small">—</span>';
     const parc = e.parcial ? ' <span class="badge badge-concluida" title="Recebido '+fmt(e.recebido)+'">Parcial</span>' : '';
     return `<tr>
-      <td>${e.obraNome}</td>
-      <td>${e.nome}</td>
+      <td>${esc(e.obraNome)}</td>
+      <td>${esc(e.nome)}</td>
       <td class="num">${fmt(e.valor)}</td>
       <td class="small">${e.nfNumero||'—'}</td>
       <td class="small">${e.nfData?new Date(e.nfData+'T00:00').toLocaleDateString('pt-BR'):'—'}</td>
@@ -1345,12 +1480,12 @@ function etapasBox(obra,r){
     const valor=valorEtapaContrato(obra,e), rec=baixaTotal(e);
     const sit = e.pago ? '<span class="badge badge-faturada">Recebido</span>' : (rec>0.005 ? '<span class="badge badge-concluida">Parcial</span>' : '<span class="small">—</span>');
     return `<tr>
-      <td><input type="text" class="etapaNome" data-o="${obra.id}" data-i="${i}" value="${e.nome}"></td>
-      <td class="num">${e.aditivoId?'<span class="small">aditivo</span>':`<input type="number" step="0.1" class="pct-input etapaPct" data-o="${obra.id}" data-i="${i}" value="${e.pct}">%`}</td>
+      <td><input type="text" class="etapaNome" data-o="${esc(obra.id)}" data-i="${i}" value="${esc(e.nome)}"></td>
+      <td class="num">${e.aditivoId?'<span class="small">aditivo</span>':`<input type="number" step="0.1" class="pct-input etapaPct" data-o="${esc(obra.id)}" data-i="${i}" value="${e.pct}">%`}</td>
       <td class="num">${fmt(valor)}${temValor(e.valorFixo)?' <span title="Valor congelado: já há NF emitida ou recebimento">🔒</span>':''}</td>
       <td style="text-align:center;">${sit}</td>
       <td class="num small">${fmt(rec)}</td>
-      <td><button class="btn danger deletapa" data-o="${obra.id}" data-i="${i}" ${(e.baixas||[]).length||e.aditivoId?`disabled title="${e.aditivoId?'Exclua pelo aditivo, na disciplina':'Desfaça os recebimentos antes de excluir'}"`:''}>x</button></td>
+      <td><button class="btn danger deletapa" data-o="${esc(obra.id)}" data-i="${i}" ${(e.baixas||[]).length||e.aditivoId?`disabled title="${e.aditivoId?'Exclua pelo aditivo, na disciplina':'Desfaça os recebimentos antes de excluir'}"`:''}>x</button></td>
     </tr>`;
   }).join('');
   const recebido = etapas.reduce((s,e)=> s + baixaTotal(e),0);
@@ -1360,11 +1495,12 @@ function etapasBox(obra,r){
     <tr class="hdr"><td>Total</td><td class="num">${pct(somaPct)}${Math.round(somaPct)!==100?' ⚠️':''}</td><td class="num">${fmt(r.valorTotal)}</td><td colspan="3" class="num">Recebido: ${fmt(recebido)} · registre NF e recebimentos em “Resumo p/ Cobrança”</td></tr>
   </table>
   ${Math.round(somaPct)!==100?'<p class="small" style="color:var(--bad);">A soma das etapas está diferente de 100% do valor da obra.</p>':''}
-  <button class="btn secondary addetapa" data-o="${obra.id}">+ etapa</button>`;
+  ${conferirObra(obra).map(m=>`<p class="small" style="color:var(--bad);">⚠️ ${esc(m)}</p>`).join('')}
+  <button class="btn secondary addetapa" data-o="${esc(obra.id)}">+ etapa</button>`;
 }
 
 function obraOptions(selectedId){
-  return DATA.obras.map(o=>`<option value="${o.id}" ${o.id===selectedId?'selected':''}>${o.nomeObra}</option>`).join('');
+  return DATA.obras.map(o=>`<option value="${esc(o.id)}" ${o.id===selectedId?'selected':''}>${esc(o.nomeObra)}</option>`).join('');
 }
 function obrasView(){
   let obrasFiltradas = DATA.obras.filter(obraMatchesFilter);
@@ -1383,26 +1519,26 @@ function obrasView(){
         const sit=equipeSituacao(e,valorEtapa);
         const autoIdx=etapaContratoIdxDe(obra,e.nome);
         const autoNome=autoIdx>=0?obra.etapasPagamento[autoIdx].nome:'nenhuma';
-        const contratoOpts=`<option value="">Automático (${autoNome})</option>`+(obra.etapasPagamento||[]).map(x=>`<option value="${x.id}" ${x.id===e.etapaContratoId?'selected':''}>${x.nome}</option>`).join('');
+        const contratoOpts=`<option value="">Automático (${esc(autoNome)})</option>`+(obra.etapasPagamento||[]).map(x=>`<option value="${esc(x.id)}" ${x.id===e.etapaContratoId?'selected':''}>${esc(x.nome)}</option>`).join('');
         return `<tr>
-          <td>${e.nome}</td>
+          <td>${esc(e.nome)}</td>
           <td class="num">${pct(e.pct)}</td>
           <td class="num">${fmt(valorEtapa)}${temValor(e.valorFixo)?' <span title="Valor congelado na aprovação">🔒</span>':''}</td>
-          <td><select class="etapaContratoSel" data-o="${obra.id}" data-mi="${mi}" data-ei="${ei}" style="max-width:190px;">${contratoOpts}</select></td>
+          <td><select class="etapaContratoSel" data-o="${esc(obra.id)}" data-mi="${mi}" data-ei="${ei}" style="max-width:190px;">${contratoOpts}</select></td>
           <td style="text-align:center;"><span class="badge badge-${EQ_SIT_BADGE[sit]}">${EQ_SIT_LABEL[sit]}</span></td>
         </tr>`;
       }).join('');
       return `<div class="servbox">
         <div class="row-flex" style="justify-content:space-between;flex-wrap:wrap;">
           <div class="row-flex">
-            <select class="equipecolab" data-o="${obra.id}" data-i="${mi}">${colabOptions(m.colaboradorId)}</select>
-            <input type="text" class="equipepapel" list="papeisEquipe" data-o="${obra.id}" data-i="${mi}" value="${m.papel||''}" placeholder="Cargo (conforme cadastro)" style="width:160px;">
-            <input type="number" step="0.1" class="pct-input equipepct" data-o="${obra.id}" data-i="${mi}" value="${m.pct||0}">%
+            <select class="equipecolab" data-o="${esc(obra.id)}" data-i="${mi}">${colabOptions(m.colaboradorId)}</select>
+            <input type="text" class="equipepapel" list="papeisEquipe" data-o="${esc(obra.id)}" data-i="${mi}" value="${esc(m.papel||'')}" placeholder="Cargo (conforme cadastro)" style="width:160px;">
+            <input type="number" step="0.1" class="pct-input equipepct" data-o="${esc(obra.id)}" data-i="${mi}" value="${m.pct||0}">%
           </div>
           <div class="row-flex">
             <span class="small"><b>${fmt(valor)}</b> (${baseLabel})</span>
-            <button class="btn secondary toggleequipe" data-id="${m.id}">${expanded?'Ocultar etapas':'Ver etapas'}</button>
-            ${equipeTemHistorico(m)?`<button class="btn secondary inatequipe" data-o="${obra.id}" data-i="${mi}" title="Tem pagamentos registrados; não pode ser removido">${m.inativo?'Reativar':'Inativar'}</button>`:`<button class="btn danger delequipe" data-o="${obra.id}" data-i="${mi}">x</button>`}${m.inativo?' <span class="badge badge-cancelada">Inativo</span>':''}
+            <button class="btn secondary toggleequipe" data-id="${esc(m.id)}">${expanded?'Ocultar etapas':'Ver etapas'}</button>
+            ${equipeTemHistorico(m)?`<button class="btn secondary inatequipe" data-o="${esc(obra.id)}" data-i="${mi}" title="Tem pagamentos registrados; não pode ser removido">${m.inativo?'Reativar':'Inativar'}</button>`:`<button class="btn danger delequipe" data-o="${esc(obra.id)}" data-i="${mi}">x</button>`}${m.inativo?' <span class="badge badge-cancelada">Inativo</span>':''}
           </div>
         </div>
         <div class="row-flex" style="margin-top:6px;">
@@ -1418,26 +1554,26 @@ function obrasView(){
     }).join('');
     const servRows=obra.servicos.map(s=>{
       const rs=calcServico(s);
-      const tipoOpts=DATA.tiposServico.map(t=>`<option value="${t.id}" ${t.id===s.tipoId?'selected':''}>${t.nome}</option>`).join('');
+      const tipoOpts=DATA.tiposServico.map(t=>`<option value="${esc(t.id)}" ${t.id===s.tipoId?'selected':''}>${esc(t.nome)}</option>`).join('');
       const despRows=s.despesas.map((d,i)=>`<tr>
-          <td><input type="text" class="dnome" data-s="${s.id}" data-i="${i}" value="${d.nome}"></td>
-          <td class="num"><input type="number" step="0.1" class="dpct pct-input" data-s="${s.id}" data-i="${i}" value="${d.pct}">%</td>
+          <td><input type="text" class="dnome" data-s="${esc(s.id)}" data-i="${i}" value="${esc(d.nome)}"></td>
+          <td class="num"><input type="number" step="0.1" class="dpct pct-input" data-s="${esc(s.id)}" data-i="${i}" value="${d.pct}">%</td>
           <td class="num">${fmt(rs.liquido*(d.pct/100))}</td>
-          <td><button class="btn danger deldesp" data-s="${s.id}" data-i="${i}">x</button></td></tr>`).join('');
+          <td><button class="btn danger deldesp" data-s="${esc(s.id)}" data-i="${i}">x</button></td></tr>`).join('');
       return `<div class="servbox">
         <div class="row-flex" style="justify-content:space-between;">
           <div class="row-flex">
-            <select class="tiposel" data-s="${s.id}">${tipoOpts}</select>
+            <select class="tiposel" data-s="${esc(s.id)}">${tipoOpts}</select>
           </div>
-          <button class="btn danger delserv" data-s="${s.id}">Remover serviço</button>
+          <button class="btn danger delserv" data-s="${esc(s.id)}">Remover serviço</button>
         </div>
         <table>
-          <tr class="hdr"><td colspan="2">Valor total com imposto</td><td class="num" colspan="2"><span class="small">R$</span> <input type="text" inputmode="decimal" class="val-input vtinp" data-s="${s.id}" value="${(s.valorTotal||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}"></td></tr>
-          <tr><td colspan="2">Impostos</td><td class="num"><input type="number" step="0.1" class="pct-input impinp" data-s="${s.id}" value="${s.imposto}">%</td><td class="num">${fmt(rs.imp)}</td></tr>
+          <tr class="hdr"><td colspan="2">Valor total com imposto</td><td class="num" colspan="2"><span class="small">R$</span> <input type="text" inputmode="decimal" class="val-input vtinp" data-s="${esc(s.id)}" value="${(s.valorTotal||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}"></td></tr>
+          <tr><td colspan="2">Impostos</td><td class="num"><input type="number" step="0.1" class="pct-input impinp" data-s="${esc(s.id)}" value="${s.imposto}">%</td><td class="num">${fmt(rs.imp)}</td></tr>
           <tr><td colspan="2">Valor líquido</td><td colspan="2" class="num">${fmt(rs.liquido)}</td></tr>
           <tr><th>Despesa (custo fixo/overhead)</th><th class="num">%</th><th class="num">R$</th><th></th></tr>
           ${despRows}
-          <tr><td colspan="4"><button class="btn secondary adddesp" data-s="${s.id}">+ despesa</button></td></tr>
+          <tr><td colspan="4"><button class="btn secondary adddesp" data-s="${esc(s.id)}">+ despesa</button></td></tr>
         </table>
         <table style="margin-top:8px;">
           <tr class="hdr"><td colspan="2">Total de despesas (overhead do serviço)</td><td colspan="2" class="num">${fmt(rs.despTotal)}</td></tr>
@@ -1449,11 +1585,11 @@ function obrasView(){
     }).join('');
     return `<div class="card">
       <div class="row-flex" style="justify-content:space-between;">
-        <h2>🏗️ ${obra.nomeObra||'(sem nome)'} <span class="small">${obra.codigo?'· '+obra.codigo:''} — ${obra.cliente.nome||'cliente não definido'}</span> <span class="badge badge-${obra.status||'andamento'}">${STATUS_LABEL[obra.status]||'Em andamento'}</span></h2>
+        <h2>🏗️ ${esc(obra.nomeObra||'(sem nome)')} <span class="small">${obra.codigo?'· '+obra.codigo:''} — ${esc(obra.cliente.nome||'cliente não definido')}</span> <span class="badge badge-${obra.status||'andamento'}">${STATUS_LABEL[obra.status]||'Em andamento'}</span></h2>
         <div class="row-flex">
-          <button class="btn secondary toggleobra" data-o="${obra.id}">${open?'Recolher':'Abrir'}</button>
-          <button class="btn secondary relatorioobra" data-o="${obra.id}">Relatório</button>
-          ${obraEmUso(obra.id)?`<button class="btn danger" disabled title="Esta obra tem lançamentos no caixa ou baixas. Para encerrar, mude o status para Cancelada.">Remover (há lançamentos)</button>`:`<button class="btn danger delobra" data-o="${obra.id}">${PENDING_DEL===obra.id?'Confirmar exclusão':'Remover'}</button>`}
+          <button class="btn secondary toggleobra" data-o="${esc(obra.id)}">${open?'Recolher':'Abrir'}</button>
+          <button class="btn secondary relatorioobra" data-o="${esc(obra.id)}">Relatório</button>
+          ${obraEmUso(obra.id)?`<button class="btn danger" disabled title="Esta obra tem lançamentos no caixa ou baixas. Para encerrar, mude o status para Cancelada.">Remover (há lançamentos)</button>`:`<button class="btn danger delobra" data-o="${esc(obra.id)}">${PENDING_DEL===obra.id?'Confirmar exclusão':'Remover'}</button>`}
         </div>
       </div>
       <div class="grid3">
@@ -1469,7 +1605,7 @@ function obrasView(){
         </div>
       </div>
       <table class="resumoTable"><tr><th colspan="2">RESUMO</th></tr>
-        ${resumo.linhas.map(l=>`<tr><td>${l.label.toUpperCase()}</td><td class="num">${l.valor?fmt(l.valor):'-'}</td></tr>`).join('') || '<tr><td colspan="2" class="small">Sem custos lançados ainda.</td></tr>'}
+        ${resumo.linhas.map(l=>`<tr><td>${esc(l.label.toUpperCase())}</td><td class="num">${l.valor?fmt(l.valor):'-'}</td></tr>`).join('') || '<tr><td colspan="2" class="small">Sem custos lançados ainda.</td></tr>'}
         <tr class="resumoTotal"><td>CUSTO TOTAL</td><td class="num">${fmt(resumo.custoTotal)}</td></tr>
         <tr class="resumoTotal"><td>VALOR TOTAL BRUTO</td><td class="num">${fmt(resumo.valorTotalBruto)}</td></tr>
         <tr class="resumoTotal"><td>VALOR TOTAL LÍQUIDO</td><td class="num">${fmt(resumo.valorTotalLiquido)}</td></tr>
@@ -1477,33 +1613,33 @@ function obrasView(){
       ${open?`
       <h3>Dados da obra</h3>
       <div class="grid3">
-        <div class="field"><label>Código do centro de custo</label><input type="text" class="obraCampo" data-o="${obra.id}" data-f="codigo" value="${obra.codigo||''}"></div>
-        <div class="field"><label>Status</label><select class="obraCampo" data-o="${obra.id}" data-f="status">
+        <div class="field"><label>Código do centro de custo</label><input type="text" class="obraCampo" data-o="${esc(obra.id)}" data-f="codigo" value="${esc(obra.codigo||'')}"></div>
+        <div class="field"><label>Status</label><select class="obraCampo" data-o="${esc(obra.id)}" data-f="status">
           ${Object.keys(STATUS_LABEL).map(k=>`<option value="${k}" ${k===(obra.status||'andamento')?'selected':''}>${STATUS_LABEL[k]}</option>`).join('')}
         </select></div>
-        <div class="field"><label>Empresa contratada (minha empresa)</label><select class="obraCampo" data-o="${obra.id}" data-f="empresaId">${empresaOptions(obra.empresaId)}</select></div>
-        <div class="field"><label>Data de início</label><input type="date" class="obraCampo" data-o="${obra.id}" data-f="dataInicio" value="${obra.dataInicio||''}"></div>
-        <div class="field"><label>Previsão de término</label><input type="date" class="obraCampo" data-o="${obra.id}" data-f="dataPrevisao" value="${obra.dataPrevisao||''}"></div>
+        <div class="field"><label>Empresa contratada (minha empresa)</label><select class="obraCampo" data-o="${esc(obra.id)}" data-f="empresaId">${empresaOptions(obra.empresaId)}</select></div>
+        <div class="field"><label>Data de início</label><input type="date" class="obraCampo" data-o="${esc(obra.id)}" data-f="dataInicio" value="${esc(obra.dataInicio||'')}"></div>
+        <div class="field"><label>Previsão de término</label><input type="date" class="obraCampo" data-o="${esc(obra.id)}" data-f="dataPrevisao" value="${esc(obra.dataPrevisao||'')}"></div>
       </div>
       <h3>Dados do cliente</h3>
       <div class="grid2">
-        <div class="field"><label>Construtora</label><input type="text" class="cliCampo" data-o="${obra.id}" data-f="construtora" value="${obra.cliente.construtora||''}"></div>
-        <div class="field"><label>SPE (sociedade de propósito específico)</label><input type="text" class="cliCampo" data-o="${obra.id}" data-f="spe" value="${obra.cliente.spe||''}"></div>
-        <div class="field"><label>Nome / Razão social</label><input type="text" class="cliCampo" data-o="${obra.id}" data-f="nome" value="${obra.cliente.nome}"></div>
-        <div class="field"><label>CPF/CNPJ</label><input type="text" class="cliCampo" data-o="${obra.id}" data-f="documento" value="${obra.cliente.documento}"></div>
-        <div class="field"><label>Telefone</label><input type="text" class="cliCampo" data-o="${obra.id}" data-f="telefone" value="${obra.cliente.telefone}"></div>
-        <div class="field"><label>E-mail</label><input type="text" class="cliCampo" data-o="${obra.id}" data-f="email" value="${obra.cliente.email}"></div>
-        <div class="field" style="grid-column:1/-1;"><label>Endereço da obra</label><input type="text" class="cliCampo" data-o="${obra.id}" data-f="endereco" value="${obra.cliente.endereco}"></div>
+        <div class="field"><label>Construtora</label><input type="text" class="cliCampo" data-o="${esc(obra.id)}" data-f="construtora" value="${esc(obra.cliente.construtora||'')}"></div>
+        <div class="field"><label>SPE (sociedade de propósito específico)</label><input type="text" class="cliCampo" data-o="${esc(obra.id)}" data-f="spe" value="${esc(obra.cliente.spe||'')}"></div>
+        <div class="field"><label>Nome / Razão social</label><input type="text" class="cliCampo" data-o="${esc(obra.id)}" data-f="nome" value="${esc(obra.cliente.nome)}"></div>
+        <div class="field"><label>CPF/CNPJ</label><input type="text" class="cliCampo" data-o="${esc(obra.id)}" data-f="documento" value="${esc(obra.cliente.documento)}"></div>
+        <div class="field"><label>Telefone</label><input type="text" class="cliCampo" data-o="${esc(obra.id)}" data-f="telefone" value="${esc(obra.cliente.telefone)}"></div>
+        <div class="field"><label>E-mail</label><input type="text" class="cliCampo" data-o="${esc(obra.id)}" data-f="email" value="${esc(obra.cliente.email)}"></div>
+        <div class="field" style="grid-column:1/-1;"><label>Endereço da obra</label><input type="text" class="cliCampo" data-o="${esc(obra.id)}" data-f="endereco" value="${esc(obra.cliente.endereco)}"></div>
       </div>
-      <div class="field" style="margin-top:8px;"><label>Nome da obra</label><input type="text" class="obraNome" data-o="${obra.id}" value="${obra.nomeObra}"></div>
-      <div class="field" style="margin-top:8px;"><label>Condições de pagamento (texto livre)</label><textarea class="obraCond" data-o="${obra.id}" rows="2">${obra.condicoes}</textarea></div>
+      <div class="field" style="margin-top:8px;"><label>Nome da obra</label><input type="text" class="obraNome" data-o="${esc(obra.id)}" value="${esc(obra.nomeObra)}"></div>
+      <div class="field" style="margin-top:8px;"><label>Condições de pagamento (texto livre)</label><textarea class="obraCond" data-o="${esc(obra.id)}" rows="2">${esc(obra.condicoes)}</textarea></div>
       <h3>Etapas de pagamento (marcos contratuais)</h3>
       ${etapasBox(obra,r)}
       <div class="coordbox">
         <h3 style="margin-top:0;">Equipe da obra</h3>
         <p class="small">Cadastre coordenadores, auxiliares, equipe de detalhamento etc. Para cada um, defina o papel e o percentual pago — sobre o líquido total da obra (coordenação, documentação) ou sobre o líquido de uma disciplina específica (ex: detalhamento só em cima de Elétrica), dividido nas 4 etapas fixas (Projeto Básico 30%, Pré-Executivo 30%, Executivo 30%, Revisão de Executivo 10%). Clique em "Ver etapas" para cada pessoa; ela mesma marca a etapa como entregue na aba dela.</p>
         ${equipeRows || '<p class="small">Nenhum integrante definido.</p>'}
-        <button class="btn secondary addequipe" data-o="${obra.id}">+ integrante da equipe</button>
+        <button class="btn secondary addequipe" data-o="${esc(obra.id)}">+ integrante da equipe</button>
       </div>
       <datalist id="papeisEquipe">
         <option value="Coordenador"></option>
@@ -1513,7 +1649,7 @@ function obrasView(){
       </datalist>
       <h3>Serviços da obra</h3>
       ${servRows}
-      <button class="btn secondary addserv" data-o="${obra.id}">+ serviço nesta obra</button>
+      <button class="btn secondary addserv" data-o="${esc(obra.id)}">+ serviço nesta obra</button>
       ${despesasObraBox(obra)}
       `:''}
     </div>`;
@@ -1522,8 +1658,8 @@ function obrasView(){
 }
 
 function baixaWidget(kind,a,b,c,saldo,baixas,label){
-  const ref=`data-k="${kind}" data-a="${a}" data-b="${b}" data-c="${c}"`;
-  const lista=(baixas||[]).map(x=>`<div class="small" style="white-space:nowrap;">${x.data?isoToBr(x.data):'s/ data'} · ${fmt(x.valor)}${x.semCaixa?' <span title="Registrado antes da integração com o caixa">(sem caixa)</span>':''} <button class="btn danger bxDel" ${ref} data-bx="${x.id}" style="padding:0 5px;" title="Desfazer esta baixa e o lançamento no caixa">x</button></div>`).join('');
+  const ref=`data-k="${esc(kind)}" data-a="${esc(a)}" data-b="${esc(b)}" data-c="${esc(c)}"`;
+  const lista=(baixas||[]).map(x=>`<div class="small" style="white-space:nowrap;">${x.data?isoToBr(x.data):'s/ data'} · ${fmt(x.valor)}${x.semCaixa?' <span title="Registrado antes da integração com o caixa">(sem caixa)</span>':''} <button class="btn danger bxDel" ${ref} data-bx="${esc(x.id)}" style="padding:0 5px;" title="Desfazer esta baixa e o lançamento no caixa">x</button></div>`).join('');
   const form = saldo>0.005 ? `<div class="row-flex bxbox" style="gap:4px;flex-wrap:nowrap;margin-top:4px;">
       <input type="text" inputmode="decimal" class="bxVal" value="${saldo.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}" style="width:92px;" title="Valor">
       <input type="text" inputmode="numeric" class="bxData dateBr" value="${isoToBr(hojeISO())}" maxlength="10" style="width:92px;" title="Data (dd/mm/aaaa)">
@@ -1542,7 +1678,7 @@ function resumoView(){
     <h2>✅ Etapas prontas para cobrar do cliente (${prontas.length})</h2>
     <p class="small">Todos os colaboradores vinculados a esta etapa já concluíram e o responsável aprovou a entrega — o financeiro já pode solicitar a NF ao cliente. Registre a NF, o vencimento e os recebimentos na tabela de cada obra, logo abaixo.</p>
     <table><tr><th>Obra</th><th>Etapa do contrato</th><th class="num">%</th><th class="num">Valor</th></tr>
-    ${prontas.map(({obra,etapa})=>`<tr><td>${obra.nomeObra}</td><td>${etapa.nome}</td><td class="num">${etapa.aditivoId?'aditivo':pct(etapa.pct)}</td><td class="num">${fmt(etapa.valor)}</td></tr>`).join('')}
+    ${prontas.map(({obra,etapa})=>`<tr><td>${esc(obra.nomeObra)}</td><td>${esc(etapa.nome)}</td><td class="num">${etapa.aditivoId?'aditivo':pct(etapa.pct)}</td><td class="num">${fmt(etapa.valor)}</td></tr>`).join('')}
     </table>
   </div>` : `<div class="card"><p class="small">Nenhuma etapa pronta para cobrança no momento — assim que todos os colaboradores vinculados a uma etapa concluírem e a entrega for aprovada, ela aparece aqui.</p></div>`;
 
@@ -1561,18 +1697,18 @@ function resumoView(){
         : e.recebido>0.005 ? `<span class="badge badge-concluida">Parcial</span> <span class="small">falta ${fmt(e.saldo)}</span>`
         : (vencido ? '<span class="badge" style="background:var(--bad);color:#fff;">Vencida</span>' : '');
       return `<tr>
-        <td>${e.nome}</td>
+        <td>${esc(e.nome)}</td>
         <td class="num">${e.aditivoId?'aditivo':pct(e.pct)}</td>
         <td class="num">${fmt(e.valor)}${e.travado?' <span title="Valor congelado: já há NF emitida ou recebimento, então mudanças no contrato não alteram esta etapa">🔒</span>':''}</td>
         <td style="text-align:center;">${situacao}</td>
-        <td><input type="text" class="nfNumero" data-o="${obra.id}" data-i="${e.idx}" value="${e.nfNumero||''}" placeholder="nº da NF" style="width:90px;"></td>
-        <td><input type="text" inputmode="numeric" class="nfData dateBr" data-o="${obra.id}" data-i="${e.idx}" value="${isoToBr(e.nfData)}" placeholder="dd/mm/aaaa" maxlength="10" style="width:110px;"></td>
-        <td><input type="text" inputmode="numeric" class="etapaVenc dateBr" data-o="${obra.id}" data-i="${e.idx}" value="${isoToBr(e.vencimento)}" placeholder="dd/mm/aaaa" maxlength="10" style="width:110px;${vencido?'border-color:var(--bad);color:var(--bad);':''}"></td>
+        <td><input type="text" class="nfNumero" data-o="${esc(obra.id)}" data-i="${e.idx}" value="${e.nfNumero||''}" placeholder="nº da NF" style="width:90px;"></td>
+        <td><input type="text" inputmode="numeric" class="nfData dateBr" data-o="${esc(obra.id)}" data-i="${e.idx}" value="${isoToBr(e.nfData)}" placeholder="dd/mm/aaaa" maxlength="10" style="width:110px;"></td>
+        <td><input type="text" inputmode="numeric" class="etapaVenc dateBr" data-o="${esc(obra.id)}" data-i="${e.idx}" value="${isoToBr(e.vencimento)}" placeholder="dd/mm/aaaa" maxlength="10" style="width:110px;${vencido?'border-color:var(--bad);color:var(--bad);':''}"></td>
         <td style="min-width:250px;">${recBadge}${baixaWidget('etapa',obra.id,e.idx,'',e.saldo,e.baixas,'Receber')}</td>
       </tr>`;
     }).join('');
     return `<div class="card">
-      <h2>🏗️ ${obra.nomeObra} <span class="small">${obra.codigo?'· '+obra.codigo:''}</span></h2>
+      <h2>🏗️ ${esc(obra.nomeObra)} <span class="small">${obra.codigo?'· '+obra.codigo:''}</span></h2>
       <div style="overflow-x:auto;">
       <table><tr><th>Etapa do contrato</th><th class="num">%</th><th class="num">Valor</th><th style="text-align:center;">Entrega dos colaboradores</th><th>Nº NF</th><th>Emissão NF</th><th>Vencimento</th><th>Recebimento</th></tr>${rows || '<tr><td colspan="8" class="small">Nenhuma etapa de pagamento cadastrada nesta obra.</td></tr>'}
       <tr class="hdr"><td>Total</td><td></td><td class="num">${fmt(totValor)}</td><td colspan="3" class="num">Recebido: ${fmt(totRec)}</td><td colspan="2" class="num">A receber: ${fmt(Math.max(0,totValor-totRec))}</td></tr></table>
@@ -1597,7 +1733,7 @@ function empresaFiltroLabel(){
 }
 function empresaFiltroBar(){
   if(SESSION.role!=='admin') return '';
-  const opts=DATA.minhasEmpresas.map(e=>`<option value="${e.id}" ${FILTER_EMPRESA===e.id?'selected':''}>${e.nome}${e.cnpj?' — '+e.cnpj:''}</option>`).join('');
+  const opts=DATA.minhasEmpresas.map(e=>`<option value="${esc(e.id)}" ${FILTER_EMPRESA===e.id?'selected':''}>${esc(e.nome)}${e.cnpj?' — '+esc(e.cnpj):''}</option>`).join('');
   return `<div class="card" style="background:var(--accent-bg);padding:10px 14px;">
     <div class="row-flex"><label class="small"><b>Empresa / CNPJ:</b></label>
       <select id="filterEmpresa"><option value="">Todas (carteira consolidada)</option>${opts}<option value="_sem" ${FILTER_EMPRESA==='_sem'?'selected':''}>Sem empresa definida</option></select>
@@ -1660,30 +1796,46 @@ function despesasObraBox(obra){
   const rows=(obra.despesasObra||[]).map(d=>{
     const v=despObraValor(obra,d), pc=despObraPct(obra,d);
     return `<tr>
-      <td><input type="text" class="dobraNome" data-o="${obra.id}" data-d="${d.id}" value="${(d.nome||'').replace(/"/g,'&quot;')}" style="width:100%;min-width:150px;"></td>
-      <td><input type="text" class="dobraForn" list="listaForn" data-o="${obra.id}" data-d="${d.id}" value="${(d.fornecedor||'').replace(/"/g,'&quot;')}" placeholder="Fornecedor" style="width:110px;"></td>
-      <td><select class="dobraColab" data-o="${obra.id}" data-d="${d.id}" style="max-width:130px;"><option value="">— colaborador —</option>${colabOptions(d.colaboradorId||'')}</select></td>
-      <td class="num"><input type="text" inputmode="decimal" class="dobraPct pct-input" data-o="${obra.id}" data-d="${d.id}" value="${(Math.round(pc*100)/100).toString().replace('.',',')}" ${d.modo==='valor'?'style="opacity:.6;" title="Calculado a partir do valor fixo"':''}>%</td>
-      <td class="num">R$ <input type="text" inputmode="decimal" class="dobraVal val-input" data-o="${obra.id}" data-d="${d.id}" value="${v.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}"></td>
+      <td><input type="text" class="dobraNome" data-o="${esc(obra.id)}" data-d="${esc(d.id)}" value="${esc(d.nome)}" style="width:100%;min-width:150px;"></td>
+      <td><input type="text" class="dobraForn" list="listaForn" data-o="${esc(obra.id)}" data-d="${esc(d.id)}" value="${esc(d.fornecedor)}" placeholder="Fornecedor" style="width:110px;"></td>
+      <td><select class="dobraColab" data-o="${esc(obra.id)}" data-d="${esc(d.id)}" style="max-width:130px;"><option value="">— colaborador —</option>${colabOptions(d.colaboradorId||'')}</select></td>
+      <td class="num"><input type="text" inputmode="decimal" class="dobraPct pct-input" data-o="${esc(obra.id)}" data-d="${esc(d.id)}" value="${(Math.round(pc*100)/100).toString().replace('.',',')}" ${d.modo==='valor'?'style="opacity:.6;" title="Calculado a partir do valor fixo"':''}>%</td>
+      <td class="num">R$ <input type="text" inputmode="decimal" class="dobraVal val-input" data-o="${esc(obra.id)}" data-d="${esc(d.id)}" value="${v.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}"></td>
       <td class="small">${d.modo==='valor'?'valor fixo':'% do líquido'}</td>
-      <td><input type="text" inputmode="numeric" class="dobraVenc dateBr" data-o="${obra.id}" data-d="${d.id}" value="${isoToBr(d.vencimento||'')}" placeholder="dd/mm/aaaa" maxlength="10" style="width:100px;"></td>
+      <td><input type="text" inputmode="numeric" class="dobraVenc dateBr" data-o="${esc(obra.id)}" data-d="${esc(d.id)}" value="${isoToBr(d.vencimento||'')}" placeholder="dd/mm/aaaa" maxlength="10" style="width:100px;"></td>
       <td class="num">${baixaTotal(d)>0?fmt(baixaTotal(d))+(baixaTotal(d)>=v-0.005&&v>0?' <span class="badge badge-faturada">Paga</span>':' <span class="badge badge-concluida">Parcial</span>'):'<span class="small">—</span>'}</td>
-      <td><button class="btn danger dobraDel" data-o="${obra.id}" data-d="${d.id}" ${(d.baixas||[]).length?'disabled title="Desfaça os pagamentos em Contas a pagar antes de excluir"':''}>x</button></td></tr>`;
+      <td><button class="btn danger dobraDel" data-o="${esc(obra.id)}" data-d="${esc(d.id)}" ${(d.baixas||[]).length?'disabled title="Desfaça os pagamentos em Contas a pagar antes de excluir"':''}>x</button></td></tr>`;
   }).join('') || '<tr><td colspan="9" class="small">Nenhuma despesa da obra.</td></tr>';
   return `<h3>Despesas da obra</h3>
     <p class="small">Custos diretos da obra, como ART e lista de materiais. Digite o <b>%</b> (calcula o valor sobre o líquido da obra, ${fmt(base)}) ou digite o <b>valor</b> para acertar o número exato — o % passa a acompanhar. Entram no custo total e no lucro da obra. Informe o <b>vencimento</b> para a despesa aparecer em <b>Contas a pagar</b> no mês certo; o pagamento (total ou parcial) é feito lá.</p>
     <table><tr><th>Despesa</th><th>Fornecedor</th><th>Colaborador</th><th class="num">%</th><th class="num">Valor</th><th></th><th>Vencimento</th><th class="num">Pago</th><th></th></tr>${rows}
       <tr class="hdr"><td colspan="3">Total das despesas da obra</td><td class="num">${pct(base?despesasObraTotal(obra)/base*100:0)}</td><td class="num">${fmt(despesasObraTotal(obra))}</td><td colspan="4"></td></tr></table>
-    <datalist id="listaForn">${fornecedoresConhecidos().map(x=>`<option value="${x}">`).join('')}</datalist>
-    <div class="row-flex" style="margin-top:6px;"><button class="btn secondary dobraAdd" data-o="${obra.id}" data-n="ART" data-f="CREA">+ ART (CREA)</button> <button class="btn secondary dobraAdd" data-o="${obra.id}" data-n="Lista de materiais">+ Lista de materiais</button> <button class="btn secondary dobraAdd" data-o="${obra.id}" data-n="Estudo de proteção">+ Estudo de proteção</button> <button class="btn secondary dobraAdd" data-o="${obra.id}" data-n="">+ outra despesa</button></div>`;
+    <datalist id="listaForn">${fornecedoresConhecidos().map(x=>`<option value="${esc(x)}">`).join('')}</datalist>
+    <div class="row-flex" style="margin-top:6px;"><button class="btn secondary dobraAdd" data-o="${esc(obra.id)}" data-n="ART" data-f="CREA">+ ART (CREA)</button> <button class="btn secondary dobraAdd" data-o="${esc(obra.id)}" data-n="Lista de materiais">+ Lista de materiais</button> <button class="btn secondary dobraAdd" data-o="${esc(obra.id)}" data-n="Estudo de proteção">+ Estudo de proteção</button> <button class="btn secondary dobraAdd" data-o="${esc(obra.id)}" data-n="">+ outra despesa</button></div>`;
+}
+function conferirObra(obra){
+  const av=[], et=obra.etapasPagamento||[];
+  et.forEach(e=>{ if((+e.pct||0)<0) av.push('Etapa "'+e.nome+'" com percentual negativo.'); });
+  const somaEq={}; (obra.equipe||[]).forEach(m=>{ if((+m.pct||0)<0) av.push('Integrante com percentual negativo.'); });
+  const totalEq=(obra.equipe||[]).reduce((a,m)=>a+(+m.pct||0),0);
+  if(totalEq>100.001) av.push('A soma dos percentuais da equipe ('+totalEq.toFixed(1)+'%) passa de 100% do valor líquido.');
+  (obra.equipe||[]).forEach(m=>{ const t=(m.etapas||[]).reduce((a,e)=>a+(+e.pct||0),0); if((m.etapas||[]).length && Math.abs(t-100)>0.01) av.push('Etapas de '+colabNome(m.colaboradorId)+' somam '+t.toFixed(1)+'% (deveriam somar 100%).'); });
+  (obra.servicos||[]).forEach(sv=>(sv.aditivos||[]).forEach(a=>{
+    const e=et.find(x=>x.aditivoId===a.id);
+    if(!e) av.push('Aditivo "'+a.desc+'" não gerou a cobrança correspondente.');
+    else if(c2(e.valorFixo)!==c2(a.valor)) av.push('Cobrança do aditivo "'+a.desc+'" ('+fmt(e.valorFixo)+') difere do valor do aditivo ('+fmt(a.valor)+').');
+  }));
+  et.filter(e=>e.aditivoId).forEach(e=>{ if(!(obra.servicos||[]).some(sv=>(sv.aditivos||[]).some(a=>a.id===e.aditivoId))) av.push('Cobrança "'+e.nome+'" aponta para um aditivo que não existe mais.'); });
+  et.forEach(e=>{ const v=valorEtapaContrato(obra,e), rec=baixaTotal(e); if(c2(rec)>c2(v)) av.push('Etapa "'+e.nome+'": recebido ('+fmt(rec)+') maior que o valor cobrado ('+fmt(v)+').'); });
+  return av;
 }
 function aditivoBox(obra,s){
   const base=baseServico(s), reaj=base-(s.valorTotal||0), adT=aditivosTotal(s);
   const lista=(s.aditivos||[]).map(a=>{
     const e=(obra.etapasPagamento||[]).find(x=>x.aditivoId===a.id);
     const bloq=e && (e.nfNumero || (e.baixas||[]).length);
-    return `<tr><td>${a.data?isoToBr(a.data):'—'}</td><td>${a.desc||''}</td><td class="num">${fmt(a.valor)}</td>
-      <td><button class="btn danger deladitivo" data-o="${obra.id}" data-s="${s.id}" data-a="${a.id}" ${bloq?'disabled title="A etapa deste aditivo já tem NF ou recebimento"':''}>x</button></td></tr>`;
+    return `<tr><td>${a.data?isoToBr(a.data):'—'}</td><td>${esc(a.desc||'')}</td><td class="num">${fmt(a.valor)}</td>
+      <td><button class="btn danger deladitivo" data-o="${esc(obra.id)}" data-s="${esc(s.id)}" data-a="${esc(a.id)}" ${bloq?'disabled title="A etapa deste aditivo já tem NF ou recebimento"':''}>x</button></td></tr>`;
   }).join('');
   return `<div class="aditbox" style="margin-top:8px;">
     <table>
@@ -1695,10 +1847,10 @@ function aditivoBox(obra,s){
       ${lista?`<tr><th>Data</th><th>Aditivo</th><th class="num">Valor</th><th></th></tr>${lista}`:''}
     </table>
     <div class="row-flex" style="margin-top:6px;">
-      <input type="text" class="aditDesc" data-s="${s.id}" placeholder="Descrição do aditivo" style="min-width:200px;">
-      <input type="text" inputmode="decimal" class="aditVal" data-s="${s.id}" placeholder="Valor R$" style="width:120px;">
-      <input type="text" inputmode="numeric" class="aditData dateBr" data-s="${s.id}" placeholder="dd/mm/aaaa" style="width:110px;">
-      <button class="btn secondary addaditivo" data-o="${obra.id}" data-s="${s.id}">+ aditivo</button>
+      <input type="text" class="aditDesc" data-s="${esc(s.id)}" placeholder="Descrição do aditivo" style="min-width:200px;">
+      <input type="text" inputmode="decimal" class="aditVal" data-s="${esc(s.id)}" placeholder="Valor R$" style="width:120px;">
+      <input type="text" inputmode="numeric" class="aditData dateBr" data-s="${esc(s.id)}" placeholder="dd/mm/aaaa" style="width:110px;">
+      <button class="btn secondary addaditivo" data-o="${esc(obra.id)}" data-s="${esc(s.id)}">+ aditivo</button>
     </div>
     <p class="small">O aditivo cria uma etapa de cobrança própria (valor fixo) no Resumo p/ Cobrança.</p>
   </div>`;
@@ -1715,23 +1867,23 @@ function inccView(){
   const idx=(DATA.incc||[]).slice().sort((a,b)=>a.mes<b.mes?1:-1);
   const mesBr=m=>m?m.slice(5,7)+'/'+m.slice(0,4):'—';
   const aplicadoEm=id=>DATA.obras.some(o=>(o.reajustes||[]).some(r=>r.inccId===id));
-  const idxRows=idx.map(i=>`<tr><td>${mesBr(i.mes)}</td><td class="num">${pct(i.pct)}</td><td class="small">${i.obs||''}</td>
-    <td><button class="btn danger delincc" data-id="${i.id}" ${aplicadoEm(i.id)?'disabled title="Índice já usado em alguma obra. Desfaça lá antes."':''}>x</button></td></tr>`).join('')||'<tr><td colspan="4" class="small">Nenhum índice cadastrado.</td></tr>';
+  const idxRows=idx.map(i=>`<tr><td>${mesBr(i.mes)}</td><td class="num">${pct(i.pct)}</td><td class="small">${esc(i.obs||'')}</td>
+    <td><button class="btn danger delincc" data-id="${esc(i.id)}" ${aplicadoEm(i.id)?'disabled title="Índice já usado em alguma obra. Desfaça lá antes."':''}>x</button></td></tr>`).join('')||'<tr><td colspan="4" class="small">Nenhum índice cadastrado.</td></tr>';
   const obras=obrasVisiveis().filter(o=>(o.status||'andamento')!=='cancelada');
   const obraCards=obras.map(o=>{
     const regs=o.reajustes||[];
     const rows=idx.map(i=>{
       const r=regs.find(x=>x.inccId===i.id);
       if(!r) return `<tr><td>${mesBr(i.mes)}</td><td class="num">${pct(i.pct)}</td><td><span class="badge badge-andamento">Pendente</span></td>
-        <td class="num"><input type="text" inputmode="decimal" class="inccPct pct-input" data-o="${o.id}" data-i="${i.id}" value="${String(i.pct).replace('.',',')}">%</td>
-        <td><button class="btn inccApl" data-o="${o.id}" data-i="${i.id}">Aplicar</button> <button class="btn secondary inccNao" data-o="${o.id}" data-i="${i.id}" title="Cliente não aceitou / outro valor negociado">Não aplicar</button></td></tr>`;
+        <td class="num"><input type="text" inputmode="decimal" class="inccPct pct-input" data-o="${esc(o.id)}" data-i="${esc(i.id)}" value="${String(i.pct).replace('.',',')}">%</td>
+        <td><button class="btn inccApl" data-o="${esc(o.id)}" data-i="${esc(i.id)}">Aplicar</button> <button class="btn secondary inccNao" data-o="${esc(o.id)}" data-i="${esc(i.id)}" title="Cliente não aceitou / outro valor negociado">Não aplicar</button></td></tr>`;
       const ap=r.status==='aplicado';
       return `<tr><td>${mesBr(i.mes)}</td><td class="num">${pct(i.pct)}</td>
         <td>${ap?'<span class="badge badge-faturada">Aplicado</span>':'<span class="badge badge-cancelada">Não aplicado</span>'}</td>
         <td class="num">${ap?pct(r.pctAplicado)+' <span class="small">('+fmt(r.valorAntes)+' → '+fmt(r.valorDepois)+')</span>':'—'}</td>
-        <td><button class="btn secondary inccDesf" data-o="${o.id}" data-i="${i.id}" data-r="${r.id}">Desfazer</button></td></tr>`;
+        <td><button class="btn secondary inccDesf" data-o="${esc(o.id)}" data-i="${esc(i.id)}" data-r="${esc(r.id)}">Desfazer</button></td></tr>`;
     }).join('');
-    return `<div class="servbox"><div class="row-flex" style="justify-content:space-between;"><b>🏗️ ${o.nomeObra||'(sem nome)'}</b><span class="small">Base contratual atual: <b>${fmt(valorContratoBase(o))}</b></span></div>
+    return `<div class="servbox"><div class="row-flex" style="justify-content:space-between;"><b>🏗️ ${esc(o.nomeObra||'(sem nome)')}</b><span class="small">Base contratual atual: <b>${fmt(valorContratoBase(o))}</b></span></div>
       ${(()=>{ const c=obraConciliacao(o); if(Math.abs(c.reajusteNominal)<0.005 && Math.abs(c.diferenca)<0.005) return ''; return `<table style="margin-top:6px;"><tr class="hdr"><td colspan="2">Conferência contrato × parcelas (sem aditivos)</td></tr>
         <tr><td>Contrato original</td><td class="num">${fmt(c.original)}</td></tr>
         <tr><td>Reajuste aplicado (nominal)</td><td class="num">${fmt(c.reajusteNominal)}</td></tr>
@@ -1758,24 +1910,24 @@ function fixasView(){
   const lista=(DATA.despesasFixas||[]).filter(f=>empresaPassa(f.empresaId||'')).slice().sort((a,b)=>(empresaNome(a.empresaId)||'~').localeCompare(empresaNome(b.empresaId)||'~')||(a.nome||'').localeCompare(b.nome||''));
   const totalMensal=lista.filter(f=>f.ativa!==false).reduce((a,f)=>a+(f.valor||0),0);
   const porEmp={}; lista.filter(f=>f.ativa!==false).forEach(f=>{ const k=f.empresaId||''; porEmp[k]=(porEmp[k]||0)+(f.valor||0); });
-  const empOpts=DATA.minhasEmpresas.map(e=>`<option value="${e.id}">${e.nome}</option>`).join('');
+  const empOpts=DATA.minhasEmpresas.map(e=>`<option value="${esc(e.id)}">${esc(e.nome)}</option>`).join('');
   const rows=lista.map(f=>{
     const mo=(f.meses||{})[mes]||{}; const v=fixaValorMes(f,mes), pg=baixaTotal(mo);
     const st=!fixaAtivaEm(f,mes)?'<span class="small">fora do período</span>':pg>=v-0.005&&v>0?'<span class="badge badge-faturada">Paga</span>':pg>0?'<span class="badge badge-concluida">Parcial</span>':'<span class="badge badge-andamento">Em aberto</span>';
     return `<tr ${f.ativa===false?'style="opacity:.55;"':''}>
-      <td><input type="text" class="fxNome" data-f="${f.id}" value="${(f.nome||'').replace(/"/g,'&quot;')}" style="min-width:160px;"></td>
-      <td><select class="fxCat" data-f="${f.id}">${FIXA_CATS.map(c=>`<option ${c===f.categoria?'selected':''}>${c}</option>`).join('')}</select></td>
-      <td><select class="fxEmp" data-f="${f.id}"><option value="">— empresa —</option>${DATA.minhasEmpresas.map(e=>`<option value="${e.id}" ${e.id===f.empresaId?'selected':''}>${e.nome}</option>`).join('')}</select></td>
-      <td class="num">R$ <input type="text" inputmode="decimal" class="fxVal val-input" data-f="${f.id}" value="${(f.valor||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}"></td>
-      <td class="num"><input type="number" min="1" max="31" class="fxDia pct-input" data-f="${f.id}" value="${f.dia||1}"></td>
-      <td><input type="text" class="fxIni" data-f="${f.id}" value="${f.inicio?f.inicio.slice(5)+'/'+f.inicio.slice(0,4):''}" placeholder="mm/aaaa" maxlength="7" style="width:80px;"></td>
-      <td style="text-align:center;"><input type="checkbox" class="fxAtiva" data-f="${f.id}" ${f.ativa!==false?'checked':''} title="Desmarque para parar de gerar nos próximos meses"></td>
+      <td><input type="text" class="fxNome" data-f="${esc(f.id)}" value="${esc(f.nome)}" style="min-width:160px;"></td>
+      <td><select class="fxCat" data-f="${esc(f.id)}">${FIXA_CATS.map(c=>`<option ${c===f.categoria?'selected':''}>${c}</option>`).join('')}</select></td>
+      <td><select class="fxEmp" data-f="${esc(f.id)}"><option value="">— empresa —</option>${DATA.minhasEmpresas.map(e=>`<option value="${esc(e.id)}" ${e.id===f.empresaId?'selected':''}>${esc(e.nome)}</option>`).join('')}</select></td>
+      <td class="num">R$ <input type="text" inputmode="decimal" class="fxVal val-input" data-f="${esc(f.id)}" value="${(f.valor||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}"></td>
+      <td class="num"><input type="number" min="1" max="31" class="fxDia pct-input" data-f="${esc(f.id)}" value="${f.dia||1}"></td>
+      <td><input type="text" class="fxIni" data-f="${esc(f.id)}" value="${f.inicio?f.inicio.slice(5)+'/'+f.inicio.slice(0,4):''}" placeholder="mm/aaaa" maxlength="7" style="width:80px;"></td>
+      <td style="text-align:center;"><input type="checkbox" class="fxAtiva" data-f="${esc(f.id)}" ${f.ativa!==false?'checked':''} title="Desmarque para parar de gerar nos próximos meses"></td>
       <td style="text-align:center;">${st}</td>
-      <td><button class="btn danger fxDel" data-f="${f.id}" ${Object.values(f.meses||{}).some(m=>(m.baixas||[]).length)?'disabled title="Há pagamentos registrados. Desmarque “Ativa” para encerrar."':''}>x</button></td></tr>`;
+      <td><button class="btn danger fxDel" data-f="${esc(f.id)}" ${Object.values(f.meses||{}).some(m=>(m.baixas||[]).length)?'disabled title="Há pagamentos registrados. Desmarque “Ativa” para encerrar."':''}>x</button></td></tr>`;
   }).join('') || '<tr><td colspan="9" class="small">Nenhuma despesa fixa cadastrada.</td></tr>';
   return `<div class="kpis" style="grid-template-columns:repeat(${Math.min(4,1+Object.keys(porEmp).length)},1fr);">
       <div class="kpi"><div class="k">Total fixo por mês</div><div class="v">${fmt(totalMensal)}</div></div>
-      ${Object.keys(porEmp).map(k=>`<div class="kpi warn"><div class="k">${k?empresaNome(k):'Sem empresa'}</div><div class="v">${fmt(porEmp[k])}</div></div>`).join('')}
+      ${Object.keys(porEmp).map(k=>`<div class="kpi warn"><div class="k">${k?esc(empresaNome(k)):'Sem empresa'}</div><div class="v">${fmt(porEmp[k])}</div></div>`).join('')}
     </div>
     <div class="card"><h2>Nova despesa fixa</h2>
       <div class="row-flex">
@@ -1837,14 +1989,14 @@ function contasView(){
     const sit=i.sit, saldo=saldoDe(i), atras=atrasadas.includes(i);
     const badge= sit==='paga'?'<span class="badge badge-faturada">Paga</span>' : sit==='vencida'?'<span class="badge" style="background:var(--bad);color:#fff;">Vencida</span>' : sit==='parcial'?'<span class="badge badge-concluida">Parcial</span>' : '<span class="badge badge-andamento">A vencer</span>';
     const ultData=i.baixas.map(b=>b.data).filter(Boolean).sort().pop();
-    const attrs=i.kind==='conta'?`data-id="${i.id}"`:i.kind==='despobra'?`data-o="${i.o}" data-d="${i.d}"`:i.kind==='fixa'?`data-f="${i.f}" data-m="${i.ym}"`:`data-o="${i.o}" data-mi="${i.mi}" data-ei="${i.ei}"`;
+    const attrs=i.kind==='conta'?`data-id="${esc(i.id)}"`:i.kind==='despobra'?`data-o="${esc(i.o)}" data-d="${esc(i.d)}"`:i.kind==='fixa'?`data-f="${esc(i.f)}" data-m="${esc(i.ym)}"`:`data-o="${esc(i.o)}" data-mi="${i.mi}" data-ei="${i.ei}"`;
     const w=(sd)=>baixaWidget(i.ref[0],i.ref[1],i.ref[2],i.ref[3],sd,i.baixas,'Pagar');
     return `<tr ${sit==='paga'?'style="opacity:.7;"':''}>
       <td style="text-align:center;"><input type="checkbox" class="${i.kind==='conta'?'contaPago':i.kind==='despobra'?'dobPago':i.kind==='fixa'?'fixaPago':'eqPago'}" ${attrs} ${sit==='paga'?'checked':''} title="${sit==='paga'?'Desmarcar desfaz os pagamentos e os lançamentos no caixa':'Marcar como pago hoje (valor integral)'}" style="width:18px;height:18px;"></td>
-      <td>${i.venc?isoToBr(i.venc):'<span class="small">sem data</span>'}${atras?' <span class="small">(atrasada)</span>':''}</td><td>${i.desc}</td><td class="small">${i.cat}</td><td class="small">${i.local}</td>
+      <td>${i.venc?isoToBr(i.venc):'<span class="small">sem data</span>'}${atras?' <span class="small">(atrasada)</span>':''}</td><td>${esc(i.desc)}</td><td class="small">${esc(i.cat)}</td><td class="small">${esc(i.local)}</td>
       <td class="num">${fmt(i.valor)}</td><td class="num">${i.pago>0?fmt(i.pago)+(sit==='paga'&&ultData?'<div class="small">em '+isoToBr(ultData)+'</div>':''):'—'}</td><td style="text-align:center;">${badge}</td>
       <td style="min-width:200px;">${sit==='paga'?w(0):`<details ${i.pago>0?'open':''}><summary class="small" style="cursor:pointer;">pagar parcial / outra data</summary>${w(saldo)}</details>`}</td>
-      <td>${i.kind==='conta'?`<button class="btn danger delconta" data-id="${i.id}" ${i.baixas.length?'disabled title="Desmarque o pagamento antes de excluir"':''}>x</button>`:''}</td>
+      <td>${i.kind==='conta'?`<button class="btn danger delconta" data-id="${esc(i.id)}" ${i.baixas.length?'disabled title="Desmarque o pagamento antes de excluir"':''}>x</button>`:''}</td>
     </tr>`;
   }).join('') || `<tr><td colspan="10" class="small">Nenhuma conta ${mes?'com vencimento neste mês':'cadastrada'}. Cadastre em “Nova conta a pagar” abaixo${mes?' ou clique em “Todos” para ver os outros meses':''}.</td></tr>`;
   return `<div class="card">
@@ -1873,7 +2025,7 @@ function contasView(){
         <div><span class="small">Já pago</span><br><b class="pos">${fmt(eq.pago)}</b></div>
         <div><span class="small">Saldo a pagar</span><br><b class="${eq.saldo>0.005?'neg':''}">${fmt(eq.saldo)}</b></div>
       </div>
-      <p class="small" style="margin-top:8px;">${eq.porColab.length? 'Pendente com: '+eq.porColab.map(x=>x.nome+' ('+fmt(x.saldo)+')').join(', ')+'. Registre o pagamento na aba Colaboradores.' : 'Nenhum pagamento de equipe pendente.'}</p>
+      <p class="small" style="margin-top:8px;">${eq.porColab.length? 'Pendente com: '+eq.porColab.map(x=>esc(x.nome)+' ('+fmt(x.saldo)+')').join(', ')+'. Registre o pagamento na aba Colaboradores.' : 'Nenhum pagamento de equipe pendente.'}</p>
     </div>`;
 }
 
@@ -1889,9 +2041,9 @@ function conferenciaCard(){
   const l=semCaixaLista(); if(!l.length) return '';
   const rows=l.map(x=>{
     const cands=DATA.caixa.filter(m=>!m.origem && m.tipo===x.tipo && m.obraId===x.o.id && (x.tipo==='entrada'||!m.colaboradorId||m.colaboradorId===x.colaboradorId) && !DATA.obras.some(ob=>JSON.stringify(ob).includes('"movId":"'+m.id+'"')));
-    const opts=cands.map(m=>`<option value="${m.id}">${isoToBr(m.data)} · ${fmt(m.valor)} · ${(m.desc||'').slice(0,30)}</option>`).join('');
-    return `<tr><td>${x.label}</td><td>${x.b.data?isoToBr(x.b.data):'s/ data'}</td><td class="num">${fmt(x.b.valor)}</td>
-      <td>${cands.length?`<select class="confSel" data-b="${x.b.id}"><option value="">— lançamento do caixa —</option>${opts}</select> <button class="btn secondary confVinc" data-b="${x.b.id}">Vincular</button> `:'<span class="small">sem lançamento correspondente</span> '}<button class="btn secondary confOk" data-b="${x.b.id}" title="Confirmar que não há lançamento no caixa para esta baixa">Manter sem caixa</button></td></tr>`;
+    const opts=cands.map(m=>`<option value="${esc(m.id)}">${isoToBr(m.data)} · ${fmt(m.valor)} · ${esc((m.desc||'').slice(0,30))}</option>`).join('');
+    return `<tr><td>${esc(x.label)}</td><td>${x.b.data?isoToBr(x.b.data):'s/ data'}</td><td class="num">${fmt(x.b.valor)}</td>
+      <td>${cands.length?`<select class="confSel" data-b="${esc(x.b.id)}"><option value="">— lançamento do caixa —</option>${opts}</select> <button class="btn secondary confVinc" data-b="${esc(x.b.id)}">Vincular</button> `:'<span class="small">sem lançamento correspondente</span> '}<button class="btn secondary confOk" data-b="${esc(x.b.id)}" title="Confirmar que não há lançamento no caixa para esta baixa">Manter sem caixa</button></td></tr>`;
   }).join('');
   return `<div class="card"><h2>Conferência de baixas antigas</h2>
     <p class="small">Estas baixas foram registradas antes da integração com o caixa e não têm lançamento. Se o valor já está no caixa como lançamento manual, vincule para não duplicar; se não está, mantenha sem caixa.</p>
@@ -1905,10 +2057,10 @@ function caixaView(){
     const obraNome = DATA.obras.find(o=>o.id===m.obraId)?.nomeObra || '—';
     const colNome = m.colaboradorId ? colabNome(m.colaboradorId) : '—';
     return `<tr>
-      <td>${new Date(m.data+'T00:00').toLocaleDateString('pt-BR')}</td><td>${m.desc}</td>
-      <td class="small">${obraNome}</td><td class="small">${colNome}</td>
+      <td>${new Date(m.data+'T00:00').toLocaleDateString('pt-BR')}</td><td>${esc(m.desc)}</td>
+      <td class="small">${esc(obraNome)}</td><td class="small">${esc(colNome)}</td>
       <td class="num ${m.tipo==='entrada'?'pos':'neg'}">${m.tipo==='entrada'?'+':'-'} ${fmt(m.valor)}</td>
-      <td>${m.origem?'<span title="Lançamento gerado por uma baixa. Para desfazer, use a tela de origem (Resumo p/ Cobrança, Colaboradores ou Contas a pagar).">🔗</span>':`<button class="btn danger delmov" data-id="${m.id}">x</button>`}</td></tr>`;
+      <td>${m.origem?'<span title="Lançamento gerado por uma baixa. Para desfazer, use a tela de origem (Resumo p/ Cobrança, Colaboradores ou Contas a pagar).">🔗</span>':`<button class="btn danger delmov" data-id="${esc(m.id)}">x</button>`}</td></tr>`;
   }).join('');
   const saldoFiltrado=lista.reduce((s,m)=>s+(m.tipo==='entrada'?m.valor:-m.valor),0);
   const saldoGeral=DATA.caixa.reduce((s,m)=>s+(m.tipo==='entrada'?m.valor:-m.valor),0);
@@ -1919,7 +2071,7 @@ function caixaView(){
       <span class="small">R$</span> <input type="text" inputmode="decimal" id="movValor" placeholder="0,00" class="val-input">
       <select id="movObra"><option value="">— sem obra —</option>${obraOptions('')}</select>
       <select id="movColab"><option value="">— sem colaborador —</option>${colabOptions('')}</select>
-      <select id="movEmpresa" title="Empresa (usada quando o lançamento não tem obra)"><option value="">— empresa —</option>${DATA.minhasEmpresas.map(e=>`<option value="${e.id}" ${FILTER_EMPRESA===e.id?'selected':''}>${e.nome}</option>`).join('')}</select>
+      <select id="movEmpresa" title="Empresa (usada quando o lançamento não tem obra)"><option value="">— empresa —</option>${DATA.minhasEmpresas.map(e=>`<option value="${esc(e.id)}" ${FILTER_EMPRESA===e.id?'selected':''}>${esc(e.nome)}</option>`).join('')}</select>
       <button class="btn" id="addMov">Adicionar</button></div></div>
     <div class="card">
       <div class="row-flex" style="justify-content:space-between;flex-wrap:wrap;">
@@ -1935,7 +2087,7 @@ function caixaView(){
       <table><tr><th>Data</th><th>Descrição</th><th>Obra</th><th>Colaborador</th><th class="num">Valor</th><th></th></tr>${rows}</table>
     </div>
     <div class="card"><h2>Histórico de ações</h2>
-      ${(DATA.historico||[]).slice(0,30).map(h=>`<div class="small" style="padding:3px 0;border-bottom:1px solid var(--border);">${new Date(h.quando).toLocaleString('pt-BR')} — ${h.txt}</div>`).join('') || '<p class="small">Nenhuma ação registrada ainda.</p>'}
+      ${(DATA.historico||[]).slice(0,30).map(h=>`<div class="small" style="padding:3px 0;border-bottom:1px solid var(--border);">${new Date(h.quando).toLocaleString('pt-BR')} — ${esc(h.txt)}</div>`).join('') || '<p class="small">Nenhuma ação registrada ainda.</p>'}
     </div>`;
 }
 
@@ -1945,10 +2097,21 @@ function mesAnoLabel(data){
   const MESES=['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
   return MESES[parseInt(m,10)-1]+'/'+y;
 }
-function pagamentosDoColaborador(uid){
+function fichaDe(uid){
+  // Ficha do colaborador: lista fechada de campos (o banco só devolve estes campos ao colaborador).
+  const c=(DATA.colaboradores||[]).find(x=>x.id===uid)||{};
+  const pg=pagamentosDoColaborador(uid,true);
+  return {colaborador:{id:uid,nome:c.nome||'',cargo:c.cargo||''},linhas:pg.linhas.map(l=>({obraId:l.obraId,obra:l.obra,tipo:l.tipo,equipeIdx:l.equipeIdx,etapaIdx:l.etapaIdx,despId:l.despId||null,papel:l.papel,p:l.p,val:l.val,pago:l.pago,saldo:l.saldo,sit:l.sit,concluido:l.concluido,aprovado:l.aprovado,pagarEm:l.pagarEm,data:l.data,mesAno:l.mesAno,baixas:(l.baixas||[]).map(b=>({id:b.id,data:b.data,valor:b.valor}))}))};
+}
+function pagamentosDoColaborador(uid,todasAsObras){
+  if(SB.on && SESSION.role==='colab'){
+    const linhas=((SB.ficha&&SB.ficha.linhas)||[]).map(l=>({...l,empresaId:'',baixas:l.baixas||[]}));
+    let total=0,aprovado=0,pago=0; linhas.forEach(l=>{ total+=l.val; if(l.aprovado) aprovado+=l.val; pago+=l.pago; });
+    return {total,totalConcluido:aprovado,aprovado,pago,saldo:Math.max(0,aprovado-pago),linhas,eqTotal:total,eqAprovado:aprovado,eqPago:pago};
+  }
   let total=0, aprovado=0, pago=0; const linhas=[];
   DATA.obras.forEach(obra=>{
-    if(SESSION.role==='admin' && !obraVisivel(obra)) return;
+    if(!todasAsObras && SESSION.role==='admin' && !obraVisivel(obra)) return;
     (obra.equipe||[]).forEach((m,mi)=>{
       if(m.colaboradorId!==uid) return;
       (m.etapas||[]).forEach((e,ei)=>{
@@ -1962,7 +2125,7 @@ function pagamentosDoColaborador(uid){
   const eqTotal=total, eqAprovado=aprovado, eqPago=pago;
   // despesas da obra vinculadas a este colaborador (lista de materiais, estudo de proteção...) — valor definido pelo admin, já aprovado
   DATA.obras.forEach(obra=>{
-    if(SESSION.role==='admin' && !obraVisivel(obra)) return;
+    if(!todasAsObras && SESSION.role==='admin' && !obraVisivel(obra)) return;
     (obra.despesasObra||[]).forEach(d=>{
       if(d.colaboradorId!==uid) return;
       const val=despObraValor(obra,d), pg=baixaTotal(d); if(val<=0.004&&pg<=0.004) return;
@@ -1975,26 +2138,26 @@ function pagamentosDoColaborador(uid){
 }
 
 function colaboradoresView(){
-  const tiposRows=DATA.tiposServico.map(t=>`<span class="small" style="margin-right:10px;">${t.nome} <button class="btn danger deltipo" data-t="${t.id}" ${tipoEmUso(t.id)?'disabled title="Tipo usado em alguma obra"':''}>x</button></span>`).join('');
+  const tiposRows=DATA.tiposServico.map(t=>`<span class="small" style="margin-right:10px;">${esc(t.nome)} <button class="btn danger deltipo" data-t="${esc(t.id)}" ${tipoEmUso(t.id)?'disabled title="Tipo usado em alguma obra"':''}>x</button></span>`).join('');
   const empresasRows=DATA.minhasEmpresas.map(e=>`<div class="row-flex" style="justify-content:space-between;border-top:1px solid var(--border);padding:6px 0;">
       <div class="grid2" style="flex:1;">
-        <div class="field"><label>Razão social</label><input type="text" class="empresaCampo" data-e="${e.id}" data-f="nome" value="${e.nome||''}"></div>
-        <div class="field"><label>CNPJ</label><input type="text" class="empresaCampo" data-e="${e.id}" data-f="cnpj" value="${e.cnpj||''}"></div>
-        <div class="field"><label>Endereço</label><input type="text" class="empresaCampo" data-e="${e.id}" data-f="endereco" value="${e.endereco||''}"></div>
-        <div class="field"><label>Telefone</label><input type="text" class="empresaCampo" data-e="${e.id}" data-f="telefone" value="${e.telefone||''}"></div>
-        <div class="field"><label>E-mail</label><input type="text" class="empresaCampo" data-e="${e.id}" data-f="email" value="${e.email||''}"></div>
+        <div class="field"><label>Razão social</label><input type="text" class="empresaCampo" data-e="${esc(e.id)}" data-f="nome" value="${esc(e.nome||'')}"></div>
+        <div class="field"><label>CNPJ</label><input type="text" class="empresaCampo" data-e="${esc(e.id)}" data-f="cnpj" value="${esc(e.cnpj||'')}"></div>
+        <div class="field"><label>Endereço</label><input type="text" class="empresaCampo" data-e="${esc(e.id)}" data-f="endereco" value="${esc(e.endereco||'')}"></div>
+        <div class="field"><label>Telefone</label><input type="text" class="empresaCampo" data-e="${esc(e.id)}" data-f="telefone" value="${esc(e.telefone||'')}"></div>
+        <div class="field"><label>E-mail</label><input type="text" class="empresaCampo" data-e="${esc(e.id)}" data-f="email" value="${esc(e.email||'')}"></div>
       </div>
-      <button class="btn danger delempresa" data-e="${e.id}" style="margin-left:8px;">x</button>
+      <button class="btn danger delempresa" data-e="${esc(e.id)}" style="margin-left:8px;">x</button>
     </div>`).join('') || '<p class="small">Nenhuma empresa cadastrada ainda.</p>';
   const rows=DATA.colaboradores.map(u=>{
     const {total,aprovado,pago,saldo,linhas}=pagamentosDoColaborador(u.id);
     const linhasHtml=linhas.map(l=>{
       const aprov = l.tipo==='despesa' ? '<span class="small">despesa da obra</span>' : l.concluido
-        ? `<label class="row-flex" style="gap:4px;flex-wrap:nowrap;"><input type="checkbox" class="aprovarEtapa" data-o="${l.obraId}" data-mi="${l.equipeIdx}" data-ei="${l.etapaIdx}" ${l.aprovado?'checked':''} ${l.baixas.length?'disabled title="Desfaça os pagamentos para alterar a aprovação"':''}><span class="small">${l.aprovado?'Aprovada':'Aprovar'}</span></label>`
+        ? `<label class="row-flex" style="gap:4px;flex-wrap:nowrap;"><input type="checkbox" class="aprovarEtapa" data-o="${esc(l.obraId)}" data-mi="${l.equipeIdx}" data-ei="${l.etapaIdx}" ${l.aprovado?'checked':''} ${l.baixas.length?'disabled title="Desfaça os pagamentos para alterar a aprovação"':''}><span class="small">${l.aprovado?'Aprovada':'Aprovar'}</span></label>`
         : '<span class="small">aguardando o colaborador</span>';
       const pagto = l.tipo==='despesa' ? `<div class="small">Vencimento: ${l.pagarEm?isoToBr(l.pagarEm):'sem data (defina na obra)'}</div>`+baixaWidget('despobra',l.obraId,l.despId,'',l.saldo,l.baixas,'Pagar')
-        : l.aprovado ? `<div class="small">Pagar até: <input type="text" inputmode="numeric" class="eqPagarEm dateBr" data-o="${l.obraId}" data-mi="${l.equipeIdx}" data-ei="${l.etapaIdx}" value="${isoToBr(l.pagarEm)}" placeholder="dd/mm/aaaa" maxlength="10" style="width:100px;"></div>`+baixaWidget('equipe',l.obraId,l.equipeIdx,l.etapaIdx,l.saldo,l.baixas,'Pagar') : '';
-      return `<tr><td>${l.obra}</td><td>${l.papel}</td><td class="num">${pct(l.p)}</td><td class="num">${fmt(l.val)}</td><td style="text-align:center;"><span class="badge badge-${EQ_SIT_BADGE[l.sit]}">${EQ_SIT_LABEL[l.sit]}</span></td><td>${aprov}</td><td style="min-width:240px;">${pagto}</td></tr>`;
+        : l.aprovado ? `<div class="small">Pagar até: <input type="text" inputmode="numeric" class="eqPagarEm dateBr" data-o="${esc(l.obraId)}" data-mi="${l.equipeIdx}" data-ei="${l.etapaIdx}" value="${isoToBr(l.pagarEm)}" placeholder="dd/mm/aaaa" maxlength="10" style="width:100px;"></div>`+baixaWidget('equipe',l.obraId,l.equipeIdx,l.etapaIdx,l.saldo,l.baixas,'Pagar') : '';
+      return `<tr><td>${esc(l.obra)}</td><td>${esc(l.papel)}</td><td class="num">${pct(l.p)}</td><td class="num">${fmt(l.val)}</td><td style="text-align:center;"><span class="badge badge-${EQ_SIT_BADGE[l.sit]}">${EQ_SIT_LABEL[l.sit]}</span></td><td>${aprov}</td><td style="min-width:240px;">${pagto}</td></tr>`;
     }).join('') || '<tr><td colspan="7" class="small">Nenhuma atribuição ainda.</td></tr>';
     // agrupa os itens concluídos por mês/ano para fechamento de folha
     const porMes={};
@@ -2018,8 +2181,8 @@ function colaboradoresView(){
       const totalMes=itens.reduce((s,l)=>s+l.val,0);
       const tipo=tipoDocumento(u,emp);
       const empLbl=emp? empresaNome(emp) : 'empresa não definida na obra';
-      const btn= tipo==='recibo' ? `<button class="btn secondary gerarrecibo" data-u="${u.id}" data-mes="${m}" data-e="${emp}">Gerar recibo de antecipação de lucros</button>`
-        : tipo==='nf' ? `<button class="btn secondary gerarnf" data-u="${u.id}" data-mes="${m}" data-e="${emp}">Solicitar NF ao colaborador</button>`
+      const btn= tipo==='recibo' ? `<button class="btn secondary gerarrecibo" data-u="${esc(u.id)}" data-mes="${m}" data-e="${emp}">Gerar recibo de antecipação de lucros</button>`
+        : tipo==='nf' ? `<button class="btn secondary gerarnf" data-u="${esc(u.id)}" data-mes="${m}" data-e="${emp}">Solicitar NF ao colaborador</button>`
         : '<span class="small neg">Defina a empresa da obra para gerar o documento</span>';
       return `<div class="row-flex" style="justify-content:space-between;border-top:1px solid var(--border);padding:6px 0;">
         <span class="small">${m} — ${empLbl} — ${itens.length} etapa(s) — ${tipo==='recibo'?'pago':'aprovado'}: <b>${fmt(totalMes)}</b></span>
@@ -2028,21 +2191,21 @@ function colaboradoresView(){
     }).join('');
     const open=OPEN_COLAB===u.id;
     return `<div class="card"><div class="row-flex" style="justify-content:space-between;">
-        <h2>${u.nome} ${u.cargo?`<span class="small">— ${u.cargo}</span>`:''}</h2>
+        <h2>${esc(u.nome)} ${u.cargo?`<span class="small">— ${esc(u.cargo)}</span>`:''}</h2>
         <div class="row-flex">
-          <button class="btn secondary togglecolab" data-u="${u.id}">${open?'Recolher':'Cadastro'}</button>
-          ${colabEmUso(u.id)?`<button class="btn danger" disabled title="Colaborador vinculado a obras ou lançamentos">Remover (em uso)</button>`:`<button class="btn danger delcolab" data-u="${u.id}">${PENDING_DEL===u.id?'Confirmar exclusão':'Remover'}</button>`}
+          <button class="btn secondary togglecolab" data-u="${esc(u.id)}">${open?'Recolher':'Cadastro'}</button>
+          ${colabEmUso(u.id)?`<button class="btn danger" disabled title="Colaborador vinculado a obras ou lançamentos">Remover (em uso)</button>`:`<button class="btn danger delcolab" data-u="${esc(u.id)}">${PENDING_DEL===u.id?'Confirmar exclusão':'Remover'}</button>`}
         </div></div>
       ${open?`
       <div class="grid2">
-        <div class="field"><label>Nome</label><input type="text" class="colabCampo" data-u="${u.id}" data-f="nome" value="${u.nome||''}"></div>
-        <div class="field"><label>Cargo / função</label><input type="text" class="colabCampo" data-u="${u.id}" data-f="cargo" value="${u.cargo||''}"></div>
-        <div class="field"><label>CPF</label><input type="text" class="colabCampo" data-u="${u.id}" data-f="documento" value="${u.documento||''}"></div>
-        <div class="field"><label>Telefone</label><input type="text" class="colabCampo" data-u="${u.id}" data-f="telefone" value="${u.telefone||''}"></div>
-        <div class="field"><label>E-mail</label><input type="text" class="colabCampo" data-u="${u.id}" data-f="email" value="${u.email||''}"></div>
-        <div class="field"><label>Chave PIX / dados bancários</label><input type="text" class="colabCampo" data-u="${u.id}" data-f="pix" value="${u.pix||''}"></div>
-        <div class="field"><label>Data de início</label><input type="date" class="colabCampo" data-u="${u.id}" data-f="dataInicio" value="${u.dataInicio||''}"></div>
-        <div class="field"><label>Sócio</label><label class="small"><input type="checkbox" class="colabSocio" data-u="${u.id}" ${u.socio?'checked':''}> Recebe antecipação de lucros (recibo pela Pimentel; NF pela ET)</label></div>
+        <div class="field"><label>Nome</label><input type="text" class="colabCampo" data-u="${esc(u.id)}" data-f="nome" value="${esc(u.nome||'')}"></div>
+        <div class="field"><label>Cargo / função</label><input type="text" class="colabCampo" data-u="${esc(u.id)}" data-f="cargo" value="${esc(u.cargo||'')}"></div>
+        <div class="field"><label>CPF</label><input type="text" class="colabCampo" data-u="${esc(u.id)}" data-f="documento" value="${esc(u.documento||'')}"></div>
+        <div class="field"><label>Telefone</label><input type="text" class="colabCampo" data-u="${esc(u.id)}" data-f="telefone" value="${esc(u.telefone||'')}"></div>
+        <div class="field"><label>E-mail</label><input type="text" class="colabCampo" data-u="${esc(u.id)}" data-f="email" value="${esc(u.email||'')}"></div>
+        <div class="field"><label>Chave PIX / dados bancários</label><input type="text" class="colabCampo" data-u="${esc(u.id)}" data-f="pix" value="${esc(u.pix||'')}"></div>
+        <div class="field"><label>Data de início</label><input type="date" class="colabCampo" data-u="${esc(u.id)}" data-f="dataInicio" value="${esc(u.dataInicio||'')}"></div>
+        <div class="field"><label>Sócio</label><label class="small"><input type="checkbox" class="colabSocio" data-u="${esc(u.id)}" ${u.socio?'checked':''}> Recebe antecipação de lucros (recibo pela Pimentel; NF pela ET)</label></div>
       </div>
       ${acessoBox(u)}`:''}
       <div style="overflow-x:auto;"><table style="margin-top:10px;"><tr><th>Obra</th><th>Papel / etapa</th><th class="num">%</th><th class="num">Valor</th><th style="text-align:center;">Situação</th><th>Aprovação</th><th>Pagamento</th></tr>${linhasHtml}</table></div>
@@ -2098,14 +2261,14 @@ function aprovacoesView(){
   const grupos=Object.keys(porColab).map(cid=>{
     const ls=porColab[cid]; const sub=ls.reduce((a,x)=>a+x.valor,0);
     const rows=ls.map(x=>`<tr>
-      <td style="width:34px;text-align:center;"><input type="checkbox" class="aprSel" data-o="${x.o.id}" data-mi="${x.mi}" data-ei="${x.ei}" style="width:17px;height:17px;"></td>
-      <td><b>${x.o.nomeObra}</b>${x.o.empresaId?`<div class="small">${empresaNome(x.o.empresaId)}</div>`:''}</td>
-      <td>${x.m.papel||'Equipe'} — ${x.e.nome}</td>
+      <td style="width:34px;text-align:center;"><input type="checkbox" class="aprSel" data-o="${esc(x.o.id)}" data-mi="${x.mi}" data-ei="${x.ei}" style="width:17px;height:17px;"></td>
+      <td><b>${esc(x.o.nomeObra)}</b>${x.o.empresaId?`<div class="small">${esc(empresaNome(x.o.empresaId))}</div>`:''}</td>
+      <td>${esc(x.m.papel||'Equipe')} — ${esc(x.e.nome)}</td>
       <td class="num">${pct(x.e.pct)}</td>
       <td class="num"><b>${fmt(x.valor)}</b></td>
       <td>${x.e.data?isoToBr(x.e.data):'—'}</td>
-      <td style="white-space:nowrap;"><button class="btn aprOk" data-o="${x.o.id}" data-mi="${x.mi}" data-ei="${x.ei}">✔ Aprovar</button> <button class="btn secondary aprBack" data-o="${x.o.id}" data-mi="${x.mi}" data-ei="${x.ei}" title="Devolve a etapa ao colaborador para ajustes">Devolver</button></td></tr>`).join('');
-    return `<div class="obracard"><div class="obrahead"><div class="row-flex"><div class="avatar" style="width:34px;height:34px;font-size:13px;">${(colabNome(cid)||'?').split(/\s+/).slice(0,2).map(w=>w[0]).join('')}</div><b>${colabNome(cid)}</b><span class="res">${colabCargo(cid)}</span></div>
+      <td style="white-space:nowrap;"><button class="btn aprOk" data-o="${esc(x.o.id)}" data-mi="${x.mi}" data-ei="${x.ei}">✔ Aprovar</button> <button class="btn secondary aprBack" data-o="${esc(x.o.id)}" data-mi="${x.mi}" data-ei="${x.ei}" title="Devolve a etapa ao colaborador para ajustes">Devolver</button></td></tr>`).join('');
+    return `<div class="obracard"><div class="obrahead"><div class="row-flex"><div class="avatar" style="width:34px;height:34px;font-size:13px;">${esc((colabNome(cid)||'?').split(/\s+/).slice(0,2).map(w=>w[0]).join(''))}</div><b>${esc(colabNome(cid))}</b><span class="res">${esc(colabCargo(cid))}</span></div>
       <span class="res">${ls.length} entrega(s) · <b>${fmt(sub)}</b></span></div>
       <table><tr><th></th><th>Obra</th><th>Entrega</th><th class="num">%</th><th class="num">Valor</th><th>Concluída em</th><th></th></tr>${rows}</table></div>`;
   }).join('') || `<div class="obracard"><div class="vazio">✅ Nada aguardando aprovação${FILTER_APROV_COLAB?' deste colaborador':''}.</div></div>`;
@@ -2114,7 +2277,7 @@ function aprovacoesView(){
       <div class="kpi"><div class="k">Valor a aprovar</div><div class="v">${fmt(todas.reduce((a,x)=>a+x.valor,0))}</div></div>
       <div class="kpi"><div class="k">Colaboradores com pendência</div><div class="v">${colabs.length}</div></div></div>
     <div class="card" style="padding:12px 16px;"><div class="row-flex" style="justify-content:space-between;">
-      <div class="row-flex"><label class="small">Colaborador:</label><select id="aprColab"><option value="">Todos</option>${colabs.map(c=>`<option value="${c}" ${FILTER_APROV_COLAB===c?'selected':''}>${colabNome(c)}</option>`).join('')}</select>
+      <div class="row-flex"><label class="small">Colaborador:</label><select id="aprColab"><option value="">Todos</option>${colabs.map(c=>`<option value="${esc(c)}" ${FILTER_APROV_COLAB===c?'selected':''}>${esc(colabNome(c))}</option>`).join('')}</select>
         <label class="small" style="margin-left:8px;"><input type="checkbox" id="aprAll"> Selecionar todas</label></div>
       <div class="row-flex"><span class="small">Na lista: <b>${fmt(totalLista)}</b></span>
         <button class="btn" id="aprSelOk">Aprovar selecionadas</button></div></div></div>
@@ -2131,39 +2294,39 @@ function colabPagamentosView(){
   const pctPago=aprovado>0?Math.min(100,pago/aprovado*100):0;
   const contagem={'':linhas.length,pendente:0,aguardando:0,receber:0,pago:0};
   linhas.forEach(l=>contagem[grupoSit(l.sit)]++);
-  const obrasDoColab=[...new Set(linhas.map(l=>l.obraId))].map(id=>({id,nome:(DATA.obras.find(o=>o.id===id)||{}).nomeObra||''}));
+  const obrasDoColab=[...new Map(linhas.map(l=>[l.obraId,l.obra])).entries()].map(([id,nome])=>({id,nome}));
   let fl=linhas.slice();
   if(FILTER_MEUS_OBRA) fl=fl.filter(l=>l.obraId===FILTER_MEUS_OBRA);
   if(FILTER_MEUS_SIT) fl=fl.filter(l=>grupoSit(l.sit)===FILTER_MEUS_SIT);
   const porObra={}; fl.forEach(l=>{ (porObra[l.obraId]=porObra[l.obraId]||[]).push(l); });
   const PILL={pendente:'Em andamento',aguardando:'Aguardando aprovação',aprovado:'Aprovada — a receber',parcial:'Pago parcialmente',pago:'Pago'};
   const obraCards=Object.keys(porObra).map(oid=>{
-    const ls=porObra[oid]; const nome=(DATA.obras.find(o=>o.id===oid)||{}).nomeObra||'';
+    const ls=porObra[oid]; const nome=ls[0].obra||'';
     const tot=ls.reduce((a,l)=>a+l.val,0), pg=ls.reduce((a,l)=>a+l.pago,0);
     const rows=ls.map(l=>{
-      const da=`data-obra="${l.obraId}" data-tipo="${l.tipo}" data-mi="${l.equipeIdx}" data-ei="${l.etapaIdx}"`;
+      const da=`data-obra="${esc(l.obraId)}" data-tipo="${esc(l.tipo)}" data-mi="${l.equipeIdx}" data-ei="${l.etapaIdx}"`;
       const acao=l.tipo==='despesa'?`<span class="concl lock on">Despesa lançada</span>`:l.aprovado?`<span class="concl lock on">✔ Entrega aprovada</span>`
         :`<label class="concl ${l.concluido?'on':''}"><input type="checkbox" class="minhaConclusao" ${da} ${l.concluido?'checked':''}> ${l.concluido?'Marcada como concluída':'Marcar como concluída'}</label>`;
       return `<div class="etapa">
-        <div class="nome">${l.papel}<div class="sub">${l.data&&l.concluido?'Concluída em '+isoToBr(l.data):'—'}</div></div>
+        <div class="nome">${esc(l.papel)}<div class="sub">${l.data&&l.concluido?'Concluída em '+isoToBr(l.data):'—'}</div></div>
         <div>${pct(l.p)}<div class="sub">da obra</div></div>
         <div><b>${fmt(l.val)}</b><div class="sub">${l.pago>0?'Recebido '+fmt(l.pago):'a receber '+(l.aprovado?fmt(l.saldo):'após aprovação')}</div></div>
         <div><span class="pill ${grupoSit(l.sit)}">${PILL[l.sit]||l.sit}</span></div>
         <div>${acao}</div></div>`;
     }).join('');
-    return `<div class="obracard"><div class="obrahead"><b>🏗️ ${nome}</b><span class="res">Contratado ${fmt(tot)} · Recebido <b class="pos">${fmt(pg)}</b></span></div>${rows}</div>`;
+    return `<div class="obracard"><div class="obrahead"><b>🏗️ ${esc(nome)}</b><span class="res">Contratado ${fmt(tot)} · Recebido <b class="pos">${fmt(pg)}</b></span></div>${rows}</div>`;
   }).join('') || `<div class="obracard"><div class="vazio">${linhas.length?'Nenhuma etapa com este filtro.':'Você ainda não tem etapas atribuídas.'}</div></div>`;
   // pagamentos recebidos
   const recebidos=[]; linhas.forEach(l=>{ if(FILTER_MEUS_OBRA && l.obraId!==FILTER_MEUS_OBRA) return; (l.baixas||[]).forEach(b=>recebidos.push({data:b.data||'',obra:l.obra,etapa:l.papel,valor:b.valor})); });
   recebidos.sort((a,b)=>a.data<b.data?1:-1);
-  const recRows=recebidos.map(r=>`<tr><td>${r.data?isoToBr(r.data):'—'}</td><td>${r.obra}</td><td>${r.etapa}</td><td class="num pos">${fmt(r.valor)}</td></tr>`).join('') || '<tr><td colspan="4" class="small">Nenhum pagamento recebido ainda.</td></tr>';
+  const recRows=recebidos.map(r=>`<tr><td>${r.data?isoToBr(r.data):'—'}</td><td>${esc(r.obra)}</td><td>${esc(r.etapa)}</td><td class="num pos">${fmt(r.valor)}</td></tr>`).join('') || '<tr><td colspan="4" class="small">Nenhum pagamento recebido ainda.</td></tr>';
   const chip=(k,l)=>`<button class="chip chipSit ${FILTER_MEUS_SIT===k?'active':''}" data-s="${k}">${l}<span class="n">${contagem[k]}</span></button>`;
   const avisos=[];
   if(contagem.aguardando) avisos.push(`⏳ ${contagem.aguardando} etapa(s) concluída(s) aguardando a aprovação do responsável.`);
   if(saldo>0.005) avisos.push(`💰 Você tem <b>${fmt(saldo)}</b> aprovado e a receber.`);
   if(contagem.pendente) avisos.push(`📝 ${contagem.pendente} etapa(s) em andamento — marque como concluída quando terminar o combinado.`);
-  return `<div class="hero"><div class="avatar">${ini}</div>
-      <div><h2>${saud}, ${(u.nome||'').split(' ')[0]}</h2><div class="cargo">${u.cargo||'Colaborador'}</div></div>
+  return `<div class="hero"><div class="avatar">${esc(ini)}</div>
+      <div><h2>${saud}, ${esc((u.nome||'').split(' ')[0])}</h2><div class="cargo">${esc(u.cargo||'Colaborador')}</div></div>
       <div class="prog"><div class="lbl"><span>Recebido do que já foi aprovado</span><b>${fmt(pago)} de ${fmt(aprovado)}</b></div><div class="bar"><i style="width:${pctPago.toFixed(1)}%"></i></div></div></div>
     <div class="kpis">
       <div class="kpi"><div class="k">Contratado</div><div class="v">${fmt(total)}</div></div>
@@ -2174,7 +2337,7 @@ function colabPagamentosView(){
     ${avisos.map(a=>`<div class="aviso">${a}</div>`).join('')}
     <div class="card" style="padding:12px 16px;"><div class="row-flex" style="justify-content:space-between;">
       <div class="chips">${chip('','Todas')}${chip('pendente','Em andamento')}${chip('aguardando','Aguardando aprovação')}${chip('receber','A receber')}${chip('pago','Pagas')}</div>
-      <div class="row-flex"><label class="small">Obra:</label><select id="meusObra"><option value="">Todas</option>${obrasDoColab.map(o=>`<option value="${o.id}" ${FILTER_MEUS_OBRA===o.id?'selected':''}>${o.nome}</option>`).join('')}</select></div>
+      <div class="row-flex"><label class="small">Obra:</label><select id="meusObra"><option value="">Todas</option>${obrasDoColab.map(o=>`<option value="${esc(o.id)}" ${FILTER_MEUS_OBRA===o.id?'selected':''}>${esc(o.nome)}</option>`).join('')}</select></div>
     </div></div>
     ${obraCards}
     <div class="card"><h2>Pagamentos recebidos</h2><table><tr><th>Data</th><th>Obra</th><th>Etapa</th><th class="num">Valor</th></tr>${recRows}</table></div>
@@ -2228,22 +2391,22 @@ function dadosDocColab(uid,mesAno,empId){
     itens=[]; linhas.filter(l=>(l.empresaId||'')===(empId||'')).forEach(l=>{ const v=(l.baixas||[]).filter(b=>b.data&&mesAnoLabel(b.data)===mesAno).reduce((a,b)=>a+b.valor,0); if(v>0.004) itens.push({...l,val:v}); });
   } else itens=linhas.filter(l=>l.aprovado && l.mesAno===mesAno && (l.empresaId||'')===(empId||''));
   const total=itens.reduce((s,l)=>s+l.val,0);
-  const itensRows=itens.map(l=>`<tr><td>${l.obra}</td><td>${l.papel}</td><td style="text-align:right;">${pct(l.p)}</td><td style="text-align:right;">${fmt(l.val)}</td></tr>`).join('');
+  const itensRows=itens.map(l=>`<tr><td>${esc(l.obra)}</td><td>${esc(l.papel)}</td><td style="text-align:right;">${pct(l.p)}</td><td style="text-align:right;">${fmt(l.val)}</td></tr>`).join('');
   return {u,emp,itens,total,itensRows};
 }
 function abrirReciboColaborador(uid, mesAno, empId){
   const x=dadosDocColab(uid,mesAno,empId); if(!x) return;
   const {u,emp,total,itensRows}=x;
   const hoje=new Date().toLocaleDateString('pt-BR',{day:'2-digit',month:'long',year:'numeric'});
-  abrirDoc(`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Recibo de antecipação de lucros — ${u.nome} — ${mesAno}</title><style>${docEstilo()}</style></head><body>
+  abrirDoc(`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Recibo de antecipação de lucros — ${esc(u.nome)} — ${mesAno}</title><style>${docEstilo()}</style></head><body>
   <h1>Recibo de antecipação de lucros</h1>
-  <h2>${emp.nome||''}${emp.cnpj?' — CNPJ '+emp.cnpj:''}</h2>
-  <p class="texto" style="margin-top:28px;">Eu, <b>${u.nome||'—'}</b>${u.documento?', CPF '+u.documento:''}, declaro ter recebido de <b>${emp.nome||'—'}</b>${emp.cnpj?', inscrita no CNPJ '+emp.cnpj:''}, a importância de <b>${fmt(total)}</b> (${valorPorExtenso(total)}), a título de <b>antecipação de lucros</b>, referente aos pagamentos realizados em ${mesAno}, dando plena e geral quitação do valor recebido.</p>
+  <h2>${esc(emp.nome||'')}${emp.cnpj?' — CNPJ '+esc(emp.cnpj):''}</h2>
+  <p class="texto" style="margin-top:28px;">Eu, <b>${esc(u.nome||'—')}</b>${u.documento?', CPF '+esc(u.documento):''}, declaro ter recebido de <b>${esc(emp.nome||'—')}</b>${emp.cnpj?', inscrita no CNPJ '+esc(emp.cnpj):''}, a importância de <b>${fmt(total)}</b> (${valorPorExtenso(total)}), a título de <b>antecipação de lucros</b>, referente aos pagamentos realizados em ${mesAno}, dando plena e geral quitação do valor recebido.</p>
   <h3>Referência</h3>
   <table><tr><th>Obra</th><th>Etapa</th><th style="text-align:right;">%</th><th style="text-align:right;">Valor</th></tr>${itensRows||'<tr><td colspan="4">—</td></tr>'}</table>
   <div class="totalbox">Total: ${fmt(total)}</div>
   <p class="texto" style="margin-top:30px;">${hoje}.</p>
-  <div class="assinatura"><div class="linha">${u.nome}${u.documento?'<br>CPF '+u.documento:''}</div><div class="linha">${emp.nome||'Financeiro'}</div></div>
+  <div class="assinatura"><div class="linha">${esc(u.nome)}${u.documento?'<br>CPF '+esc(u.documento):''}</div><div class="linha">${esc(emp.nome||'Financeiro')}</div></div>
   <script>window.onload=()=>window.print();<\/script></body></html>`);
   logAcao('Recibo de antecipação de lucros gerado: '+u.nome+' — '+mesAno+' — '+fmt(total)+' ('+(emp.nome||'')+')');
   save(DATA);
@@ -2251,14 +2414,14 @@ function abrirReciboColaborador(uid, mesAno, empId){
 function abrirSolicitacaoNF(uid, mesAno, empId){
   const x=dadosDocColab(uid,mesAno,empId); if(!x) return;
   const {u,emp,total,itensRows}=x;
-  abrirDoc(`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Solicitação de NF — ${u.nome} — ${mesAno}</title><style>${docEstilo()}</style></head><body>
+  abrirDoc(`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Solicitação de NF — ${esc(u.nome)} — ${mesAno}</title><style>${docEstilo()}</style></head><body>
   <h1>Solicitação de Nota Fiscal</h1>
   <h2>Competência ${mesAno} — emitida em ${new Date().toLocaleDateString('pt-BR')}</h2>
-  <p class="texto">Olá, <b>${u.nome||''}</b>. Para o pagamento dos serviços abaixo, solicitamos a emissão de nota fiscal em nome do tomador indicado.</p>
+  <p class="texto">Olá, <b>${esc(u.nome||'')}</b>. Para o pagamento dos serviços abaixo, solicitamos a emissão de nota fiscal em nome do tomador indicado.</p>
   <h3>Tomador (emitir a NF para)</h3>
-  <table><tr><td><b>Razão social</b></td><td>${emp.nome||'—'}</td></tr><tr><td><b>CNPJ</b></td><td>${emp.cnpj||'—'}</td></tr><tr><td><b>Endereço</b></td><td>${emp.endereco||'—'}</td></tr><tr><td><b>E-mail</b></td><td>${emp.email||'—'}</td></tr></table>
+  <table><tr><td><b>Razão social</b></td><td>${esc(emp.nome||'—')}</td></tr><tr><td><b>CNPJ</b></td><td>${esc(emp.cnpj||'—')}</td></tr><tr><td><b>Endereço</b></td><td>${esc(emp.endereco||'—')}</td></tr><tr><td><b>E-mail</b></td><td>${esc(emp.email||'—')}</td></tr></table>
   <h3>Prestador</h3>
-  <table><tr><td><b>Nome</b></td><td>${u.nome||'—'}</td></tr><tr><td><b>CPF/CNPJ</b></td><td>${u.documento||'—'}</td></tr><tr><td><b>Chave PIX / dados bancários</b></td><td>${u.pix||'—'}</td></tr></table>
+  <table><tr><td><b>Nome</b></td><td>${esc(u.nome||'—')}</td></tr><tr><td><b>CPF/CNPJ</b></td><td>${esc(u.documento||'—')}</td></tr><tr><td><b>Chave PIX / dados bancários</b></td><td>${esc(u.pix||'—')}</td></tr></table>
   <h3>Serviços e valor</h3>
   <table><tr><th>Obra</th><th>Etapa</th><th style="text-align:right;">%</th><th style="text-align:right;">Valor</th></tr>${itensRows||'<tr><td colspan="4">—</td></tr>'}</table>
   <div class="totalbox">Valor da NF: ${fmt(total)} (${valorPorExtenso(total)})</div>
@@ -2275,19 +2438,19 @@ function abrirRelatorioObra(obraId){
   const dataStr=d=> d? new Date(d+'T00:00').toLocaleDateString('pt-BR') : '—';
   const servRows=obra.servicos.map(s=>{
     const rs=calcServico(s);
-    return `<tr><td>${tipoNome(s.tipoId)}</td><td style="text-align:right;">${fmt(vigente(s))}</td><td style="text-align:right;">${fmt(rs.despTotal)}</td><td style="text-align:right;">${fmt(rs.lucro)}</td><td style="text-align:right;">${pct(rs.lucroPct)}</td></tr>`;
+    return `<tr><td>${esc(tipoNome(s.tipoId))}</td><td style="text-align:right;">${fmt(vigente(s))}</td><td style="text-align:right;">${fmt(rs.despTotal)}</td><td style="text-align:right;">${fmt(rs.lucro)}</td><td style="text-align:right;">${pct(rs.lucroPct)}</td></tr>`;
   }).join('');
   const equipeRows=(obra.equipe||[]).map(m=>{
     const valor=equipeMembroValor(obra,m);
     const baseLabel=baseLabelMembro(obra,m);
-    const etapasTxt=(m.etapas||[]).filter(e=>e.pct).map(e=>`${e.nome} ${pct(e.pct)} (${e.concluido?'Concluído':'Pendente'})`).join(', ') || 'nenhuma etapa com %';
-    return `<li>${colabNome(m.colaboradorId)}${m.papel?' — '+m.papel:''} — ${pct(m.pct)} sobre ${baseLabel} (${fmt(valor)})<br><span style="font-size:11px;color:#888;">${etapasTxt}</span></li>`;
+    const etapasTxt=(m.etapas||[]).filter(e=>e.pct).map(e=>`${esc(e.nome)} ${pct(e.pct)} (${e.concluido?'Concluído':'Pendente'})`).join(', ') || 'nenhuma etapa com %';
+    return `<li>${esc(colabNome(m.colaboradorId))}${m.papel?' — '+esc(m.papel):''} — ${pct(m.pct)} sobre ${baseLabel} (${fmt(valor)})<br><span style="font-size:11px;color:#888;">${etapasTxt}</span></li>`;
   }).join('') || '<li>Nenhum integrante de equipe definido</li>';
   const etapasRows=(obra.etapasPagamento||[]).map(e=>{
     const valor=valorEtapaContrato(obra,e), rec=baixaTotal(e);
-    return `<tr><td>${e.nome}</td><td style="text-align:right;">${pct(e.pct)}</td><td style="text-align:right;">${fmt(valor)}</td><td>${e.pago?'Recebido':(rec>0?'Parcial ('+fmt(rec)+')':'Pendente')}</td><td>${dataStr(e.data)}</td></tr>`;
+    return `<tr><td>${esc(e.nome)}</td><td style="text-align:right;">${pct(e.pct)}</td><td style="text-align:right;">${fmt(valor)}</td><td>${e.pago?'Recebido':(rec>0?'Parcial ('+fmt(rec)+')':'Pendente')}</td><td>${dataStr(e.data)}</td></tr>`;
   }).join('') || '<tr><td colspan="5">Nenhuma etapa cadastrada</td></tr>';
-  const html=`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Relatório — ${obra.nomeObra}</title>
+  const html=`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Relatório — ${esc(obra.nomeObra)}</title>
   <style>
     body{font-family:Arial,Helvetica,sans-serif;color:#1a1d23;max-width:800px;margin:30px auto;padding:0 20px;}
     h1{font-size:20px;margin-bottom:2px;} h2{font-size:14px;color:#555;margin-top:0;font-weight:normal;}
@@ -2301,20 +2464,20 @@ function abrirRelatorioObra(obraId){
     .badge{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:12px;background:#eee;}
     @media print{ body{margin:0;padding:0 10px;} }
   </style></head><body>
-  <h1>${obra.nomeObra} <span class="badge">${STATUS_LABEL[obra.status]||''}</span></h1>
-  <h2>Código: ${obra.codigo||'—'} &nbsp;•&nbsp; Cliente: ${obra.cliente.nome||'—'} &nbsp;•&nbsp; Emitido em ${new Date().toLocaleDateString('pt-BR')}</h2>
-  ${(()=>{const emp=DATA.minhasEmpresas.find(e=>e.id===obra.empresaId); return emp? `<h3>Empresa contratada</h3><table><tr><td><b>Razão social</b></td><td>${emp.nome||'—'}</td></tr><tr><td><b>CNPJ</b></td><td>${emp.cnpj||'—'}</td></tr></table>` : '';})()}
+  <h1>${esc(obra.nomeObra)} <span class="badge">${STATUS_LABEL[obra.status]||''}</span></h1>
+  <h2>Código: ${esc(obra.codigo||'—')} &nbsp;•&nbsp; Cliente: ${esc(obra.cliente.nome||'—')} &nbsp;•&nbsp; Emitido em ${new Date().toLocaleDateString('pt-BR')}</h2>
+  ${(()=>{const emp=DATA.minhasEmpresas.find(e=>e.id===obra.empresaId); return emp? `<h3>Empresa contratada</h3><table><tr><td><b>Razão social</b></td><td>${esc(emp.nome||'—')}</td></tr><tr><td><b>CNPJ</b></td><td>${esc(emp.cnpj||'—')}</td></tr></table>` : '';})()}
 
   <h3>Dados do cliente</h3>
   <table>
-    <tr><td><b>Construtora</b></td><td>${obra.cliente.construtora||'—'}</td></tr>
-    <tr><td><b>SPE</b></td><td>${obra.cliente.spe||'—'}</td></tr>
-    <tr><td><b>Nome/Razão social</b></td><td>${obra.cliente.nome||'—'}</td></tr>
-    <tr><td><b>CPF/CNPJ</b></td><td>${obra.cliente.documento||'—'}</td></tr>
-    <tr><td><b>Telefone</b></td><td>${obra.cliente.telefone||'—'}</td></tr>
-    <tr><td><b>E-mail</b></td><td>${obra.cliente.email||'—'}</td></tr>
-    <tr><td><b>Endereço da obra</b></td><td>${obra.cliente.endereco||'—'}</td></tr>
-    <tr><td><b>Condições de pagamento</b></td><td>${obra.condicoes||'—'}</td></tr>
+    <tr><td><b>Construtora</b></td><td>${esc(obra.cliente.construtora||'—')}</td></tr>
+    <tr><td><b>SPE</b></td><td>${esc(obra.cliente.spe||'—')}</td></tr>
+    <tr><td><b>Nome/Razão social</b></td><td>${esc(obra.cliente.nome||'—')}</td></tr>
+    <tr><td><b>CPF/CNPJ</b></td><td>${esc(obra.cliente.documento||'—')}</td></tr>
+    <tr><td><b>Telefone</b></td><td>${esc(obra.cliente.telefone||'—')}</td></tr>
+    <tr><td><b>E-mail</b></td><td>${esc(obra.cliente.email||'—')}</td></tr>
+    <tr><td><b>Endereço da obra</b></td><td>${esc(obra.cliente.endereco||'—')}</td></tr>
+    <tr><td><b>Condições de pagamento</b></td><td>${esc(obra.condicoes||'—')}</td></tr>
     <tr><td><b>Início / Previsão de término</b></td><td>${dataStr(obra.dataInicio)} — ${dataStr(obra.dataPrevisao)}</td></tr>
   </table>
 
@@ -2330,7 +2493,7 @@ function abrirRelatorioObra(obraId){
 
   <h3>Resumo de custos</h3>
   <table>
-    ${resumo.linhas.map(l=>`<tr><td>${l.label.toUpperCase()}</td><td style="text-align:right;">${l.valor?fmt(l.valor):'-'}</td></tr>`).join('') || '<tr><td colspan="2">Sem custos lançados ainda.</td></tr>'}
+    ${resumo.linhas.map(l=>`<tr><td>${esc(l.label.toUpperCase())}</td><td style="text-align:right;">${l.valor?fmt(l.valor):'-'}</td></tr>`).join('') || '<tr><td colspan="2">Sem custos lançados ainda.</td></tr>'}
     <tr style="font-weight:700;"><td>CUSTO TOTAL</td><td style="text-align:right;">${fmt(resumo.custoTotal)}</td></tr>
     <tr style="font-weight:700;"><td>VALOR TOTAL BRUTO</td><td style="text-align:right;">${fmt(resumo.valorTotalBruto)}</td></tr>
     <tr style="font-weight:700;"><td>VALOR TOTAL LÍQUIDO</td><td style="text-align:right;">${fmt(resumo.valorTotalLiquido)}</td></tr>
@@ -2356,7 +2519,7 @@ function abrirRelatorioObra(obraId){
 }
 
 function attachMain(){
-  document.getElementById('logout').onclick=()=>{ if(SB.on){ sbSair(); } else { SESSION={role:null}; render(); } };
+  document.getElementById('logout').onclick=()=>{ if(SB.on){ if((SYNC.pend||SYNC.timer||SYNC.busy) && !confirm('Há alterações ainda não salvas. Sair mesmo assim? (elas serão perdidas)')) return; sbSair(); } else { SESSION={role:null}; render(); } };
   const chs=document.getElementById('alterarSenha');
   if(chs) chs.onclick=async()=>{
     const n=prompt('Digite a nova senha (mínimo 8 caracteres):'); if(n===null) return;
@@ -2370,6 +2533,13 @@ function attachMain(){
     document.querySelectorAll('.chipSit').forEach(c=>c.onclick=()=>{FILTER_MEUS_SIT=c.dataset.s;render();});
     const mo=document.getElementById('meusObra'); if(mo) mo.onchange=e=>{FILTER_MEUS_OBRA=e.target.value;render();};
     document.querySelectorAll('.minhaConclusao').forEach(cb=>cb.onchange=e=>{
+      if(SB.on){
+        const l=((SB.ficha&&SB.ficha.linhas)||[]).find(x=>x.tipo==='equipe_etapa'&&x.obraId===cb.dataset.obra&&String(x.equipeIdx)===cb.dataset.mi&&String(x.etapaIdx)===cb.dataset.ei);
+        if(!l||l.aprovado){ render(); return; }
+        const novo=e.target.checked; cb.disabled=true;
+        sbMarcarEntrega(l.obraId,l.equipeIdx,l.etapaIdx,novo).then(()=>sbCarregar(false)).catch(err=>{ alert('Não foi possível registrar: '+err.message); render(); });
+        return;
+      }
       const obra=DATA.obras.find(o=>o.id===cb.dataset.obra); if(!obra) return;
       const membro=(obra.equipe||[])[cb.dataset.mi]; if(!membro) return;
       const item=membro.etapas[cb.dataset.ei];
