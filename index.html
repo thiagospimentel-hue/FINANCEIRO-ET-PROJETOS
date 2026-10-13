@@ -994,7 +994,7 @@ function conviteTexto(c){
   return 'Olá, '+(c.nome||'').split(' ')[0]+'! Você foi convidado(a) para o sistema financeiro da ET Engenharia e Projetos.\n\nAcesse: '+location.origin+location.pathname+'\nE-mail: '+c.email+'\nSenha inicial: '+c.senha+'\n\nNo primeiro acesso, troque a senha em "Alterar senha".';
 }
 function conviteBox(){
-  if(SB.on && CONVITE_EMAIL){ const c=CONVITE_EMAIL; return `<div class="card" style="border-color:var(--ok,#1a7f4b);"><h2>Convite enviado</h2><p class="small">Enviamos um e-mail para <b>${esc(c.email)}</b>. ${esc(c.nome.split(' ')[0])} deve abrir o link, criar a senha e já entra no sistema. Se não chegar em alguns minutos, peça para olhar a caixa de spam.</p><button class="btn secondary" id="cvEmailFechar">Fechar</button></div>`; }
+  if(SB.on && CONVITE_EMAIL){ const c=CONVITE_EMAIL; return `<div class="card" style="border-color:var(--ok,#1a7f4b);"><h2>${c.reenvio?'Link reenviado':'Convite enviado'}</h2><p class="small">Enviamos um e-mail para <b>${esc(c.email)}</b>. ${esc(c.nome.split(' ')[0])} deve abrir o link, criar a senha e já entra no sistema. Se não chegar em alguns minutos, peça para olhar a caixa de spam.</p><button class="btn secondary" id="cvEmailFechar">Fechar</button></div>`; }
   if(!SB.on || !CONVITE_ATUAL) return '';
   const c=CONVITE_ATUAL;
   return `<div class="card" style="border-color:var(--ok,#1a7f4b);"><h2>Convite pronto — ${esc(c.nome)}</h2>
@@ -2880,7 +2880,13 @@ function attachMain(){
       const erro=t=>{ msg.textContent=t; msg.style.color='var(--bad)'; };
       if(!nome){ erro('Informe o nome.'); return; }
       if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ erro('Informe um e-mail válido.'); return; }
-      if((SB.acessos||[]).some(a=>a.email===email)){ erro('Este e-mail já tem acesso.'); return; }
+      if((SB.acessos||[]).some(a=>a.email===email)){
+        // já cadastrado: reenvia o link (definir/redefinir senha) em vez de recusar
+        cvE.disabled=true; msg.style.color=''; msg.textContent='E-mail já cadastrado — reenviando o link…';
+        try{ await sbAcesso('recuperar',email,{redirectTo:location.origin+location.pathname}); logAcao('Link reenviado por e-mail: '+email); CONVITE_EMAIL={nome:nome||email,email,reenvio:true}; render(); }
+        catch(err){ cvE.disabled=false; erro('Não foi possível reenviar: '+err.message); }
+        return;
+      }
       cvE.disabled=true; msg.style.color=''; msg.textContent='Enviando convite…';
       const id='u'+Date.now();
       DATA.colaboradores.push({id,nome,cargo,documento:'',telefone:tel,email,pix:'',dataInicio:''});

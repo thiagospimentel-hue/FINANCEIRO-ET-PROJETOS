@@ -77,6 +77,17 @@ Deno.serve(async (req) => {
       if (!lista.some((c) => c.id === colab)) {
         return json({ erro: "Colaborador não encontrado no cadastro. Salve o cadastro antes de liberar o acesso." }, 400);
       }
+      // e-mail já cadastrado: em vez de recusar, reenvia o link para definir/redefinir a senha
+      if (b.acao === "convidar") {
+        const { data: existente } = await admin.from("profiles").select("user_id,role").eq("email", email).maybeSingle();
+        if (existente) {
+          if (existente.role === "admin") return json({ erro: "Este e-mail pertence a um administrador." }, 409);
+          const { error: eRe } = await admin.auth.resetPasswordForEmail(email, { redirectTo });
+          if (eRe) return json({ erro: msgEmail(eRe.message) }, 400);
+          await auditar("LINK_REENVIADO", email, null);
+          return json({ ok: true, reenviado: true });
+        }
+      }
       const { data: ja } = await admin.from("profiles").select("user_id").eq("colaborador_id", colab).maybeSingle();
       if (ja) return json({ erro: "Este colaborador já tem acesso. Use redefinir senha." }, 409);
       const { data: mesmo } = await admin.from("profiles").select("user_id").eq("email", email).maybeSingle();
