@@ -1475,14 +1475,38 @@ function sincRetencoes(obra){
 }
 function membroTemMovimento(m){ return (m.etapas||[]).some(e=>(e.baixas||[]).length>0||(e.aprovado&&!e.auto)); }
 // modo: 'media' | 'entrega'; obraId vazio = todas as obras do colaborador. Não mexe em quem já tem aprovação/pagamento.
+// Remarca a média preservando as parcelas que já têm pagamento: o que falta é redistribuído nos demais meses do novo período
+function remarcarMediaPreservando(o,m,cfg){
+  const total=equipeMembroValor(o,m); if(!(total>0)) return false;
+  const kept=(m.etapas||[]).filter(e=>(e.baixas||[]).length>0&&!e.retencao);
+  const keptRet=(m.etapas||[]).filter(e=>e.retencao&&((e.baixas||[]).length>0||e.aprovado&&!e.auto));
+  if(keptRet.length) return false;
+  const novas=mediaEtapas(cfg); const retNova=novas.find(e=>e.retencao);
+  const keptYm=new Set(kept.map(e=>(e.pagarEm||'').slice(0,7)));
+  const livres=novas.filter(e=>e.mensal&&!keptYm.has((e.pagarEm||'').slice(0,7)));
+  const valKept=kept.reduce((a,e)=>a+valorEquipeEtapa(o,m,e),0);
+  const valRet=retNova?total*(retNova.pct/100):0;
+  const resto=total-valKept-valRet;
+  if(livres.length===0){ if(Math.abs(resto)>0.01) return false; }
+  else if(resto<-0.01) return false;
+  const pc=livres.length?Math.round(Math.max(0,resto)/total*100/livres.length*1e4)/1e4:0; let acum=0;
+  livres.forEach((e,i)=>{ e.pct=i===livres.length-1?Math.round((Math.max(0,resto)/total*100-acum)*1e4)/1e4:pc; acum+=pc; });
+  const mens=kept.concat(livres).sort((a,b)=>(a.pagarEm||'')<(b.pagarEm||'')?-1:1);
+  mens.forEach((e,i)=>{ const [y,mm]=(e.pagarEm||'').slice(0,7).split('-').map(Number); e.nome='Parcela '+(i+1)+'/'+mens.length+' — '+MES_ABREV[mm-1]+'/'+y; });
+  m.modelo='media'; m.media={inicio:cfg.inicio,meses:mens.length,ret:+cfg.ret,dia:+cfg.dia,travado:true}; if(cfg.fim) m.media.fim=cfg.fim; if(cfg.grupoId) m.media.grupoId=cfg.grupoId; if(cfg.grupo) m.media.grupo=cfg.grupo;
+  m.etapas=mens.concat(retNova?[retNova]:[]);
+  return true;
+}
 function aplicarModeloPagamento(colabId,modo,cfg,obraId){
   let ok=0,bloq=0;
   DATA.obras.forEach(o=>{
     if(obraId && !(Array.isArray(obraId)?obraId.includes(o.id):o.id===obraId)) return;
     (o.equipe||[]).forEach(m=>{
       if(m.colaboradorId!==colabId || m.inativo) return;
-      if(membroTemMovimento(m)){ bloq++; return; }
+      const jaMedia=m.modelo==='media';
       if(m.media&&m.media.travado&&!cfg.destravar){ bloq++; return; }
+      if(jaMedia&&modo==='media'&&(m.etapas||[]).some(e=>(e.baixas||[]).length>0)){ if(remarcarMediaPreservando(o,m,cfg)) ok++; else bloq++; return; }
+      if(membroTemMovimento(m)){ bloq++; return; }
       if(modo==='media'){ m.modelo='media'; m.media={inicio:cfg.inicio,meses:+cfg.meses,ret:+cfg.ret,dia:+cfg.dia,travado:true}; if(cfg.fim) m.media.fim=cfg.fim; if(cfg.grupoId) m.media.grupoId=cfg.grupoId; if(cfg.grupo) m.media.grupo=cfg.grupo; m.etapas=mediaEtapas(cfg); }
       else { delete m.modelo; delete m.media; m.etapas=etapasDoPapel(m.papel); }
       ok++;
@@ -1599,11 +1623,11 @@ function mediaColabHtml(u){
   const linhas=vinc.map(({o,ms})=>{
     const valor=ms.reduce((a,m)=>a+equipeMembroValor(o,m),0);
     const trav=ms.some(m=>m.media&&m.media.travado), temPg=ms.some(membroTemMovimento);
-    const bloq=temPg||trav;
+    const bloq=trav||ms.some(m=>m.modelo!=='media'&&membroTemMovimento(m));
     const med=ms.find(m=>m.modelo==='media');
     const sel=!bloq&&st.obras.includes(o.id); if(sel) tot+=valor;
     const atual=med?`média ${med.media.meses}x desde ${esc(med.media.inicio)}`:'por entrega';
-    return `<tr><td><label><input type="checkbox" class="mcOb" data-u="${cc}" data-o="${esc(o.id)}" ${sel?'checked':''} ${bloq?'disabled':''}> ${esc(o.nomeObra)}</label></td><td class="num">${fmt(valor)}</td><td class="small">${atual}${trav?' · 🔒 grupo travado (destrave para alterar)'+(temPg?' e há pagamento registrado (desfaça o pagamento do mês na conferência)':''):bloq?' · 🔒 pagamento já registrado — para alterar, desfaça antes o pagamento do mês na conferência mensal':''}</td></tr>`;
+    return `<tr><td><label><input type="checkbox" class="mcOb" data-u="${cc}" data-o="${esc(o.id)}" ${sel?'checked':''} ${bloq?'disabled':''}> ${esc(o.nomeObra)}</label></td><td class="num">${fmt(valor)}</td><td class="small">${atual}${trav?' · 🔒 grupo travado (destrave para alterar)'+(temPg?' e há pagamento registrado':''):bloq?' · 🔒 já tem aprovação/pagamento (não alterável)':temPg?' · pagamentos já feitos serão preservados ao remarcar':''}</td></tr>`;
   }).join('');
   const c=st.cfg, n=mesesPeriodo(c.inicio,c.fim), ret=+c.ret||0;
   const resumo=tot>0?`<p class="small">Grupo (obras marcadas): total <b>${fmt(tot)}</b> · parcela mensal <b>${fmt(tot*(100-ret)/100/n)}</b> por ${n} mês(es) · retido até a conclusão <b>${fmt(tot*ret/100)}</b></p>`:'<p class="small">Marque as obras que entram no grupo.</p>';
@@ -3856,7 +3880,7 @@ function attachMain(){
       const r=aplicarModeloPagamento(b.dataset.u,b.dataset.m,cfg,st.obras.slice());
       logAcao('Forma de pagamento ('+(b.dataset.m==='media'?'média mensal, grupo '+cfg.grupo+', '+cfg.inicio+' a '+cfg.fim:'por entrega')+') aplicada a '+colabNome(b.dataset.u)+' em '+r.ok+' vínculo(s)');
       if(b.dataset.m==='entrega') alert(r.ok?('Pagamento por entrega ativado em '+r.ok+' vínculo(s).'):'Nada foi alterado.'+(r.bloq?'':' (as obras marcadas já estavam por entrega)'));
-      if(r.bloq) alert(r.bloq+' vínculo(s) não foram alterados: grupo travado (destrave antes) ou pagamento já registrado.');
+      if(r.bloq) alert(r.bloq+' vínculo(s) não foram alterados: grupo travado (destrave antes), valor já pago maior que o novo total ou retenção já liberada.');
       save(DATA); setTimeout(render,0);
     });
     document.querySelectorAll('.abrirColab').forEach(b=>b.onclick=e=>{ e.stopPropagation(); if(!b.dataset.u) return; SEL_COLAB=b.dataset.u; OPEN_COLAB=null; render(); window.scrollTo(0,0); });
