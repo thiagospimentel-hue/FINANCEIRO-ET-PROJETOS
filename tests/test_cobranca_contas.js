@@ -20,11 +20,6 @@ const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwrig
   T('depósito escolhido e conta padrão definida', await p.evaluate(()=>{const e=DATA.obras[0].etapasPagamento[0]; return e.formaPgto==='deposito'&&!!e.contaId;}));
   await p.selectOption('.etConta',{index:2}); await p.waitForTimeout(100);
   T('conta escolhida = Sicoob', await p.evaluate(()=>acharConta(DATA.obras[0].etapasPagamento[0].contaId).conta.apelido)==='Sicoob');
-  await p.click('.etCob'); const txt=await p.inputValue('#cobTxt');
-  T('texto de cobrança com banco, agência, conta, titular, NF e valor', /Sicoob/.test(txt)&&/4321/.test(txt)&&/11111-2/.test(txt)&&/NF nº 068/.test(txt)&&/R\$\s*50\.000,00/.test(txt)&&/DEPÓSITO/.test(txt), txt.split('\n').slice(0,12));
-  await p.click('#cobFechar');
-  await p.selectOption('.etForma','boleto'); await p.waitForTimeout(100);
-  await p.click('.etCob'); const t2=await p.inputValue('#cobTxt'); T('boleto: texto muda', /BOLETO/.test(t2)&&!/Agência/.test(t2)); await p.click('#cobFechar');
   // recebimento marca a conta no caixa
   await p.evaluate(()=>{ const bx=document.querySelector('.bxAdd'); });
   await p.click('.bxAdd'); await p.waitForTimeout(200);

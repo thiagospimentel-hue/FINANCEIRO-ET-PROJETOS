@@ -12,6 +12,7 @@
 html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;}
 button{font-family:inherit;cursor:pointer;}
 input,select,textarea{font-family:inherit;}
+.row2{display:flex;gap:6px;flex-wrap:nowrap;}
 .stk{display:flex;flex-direction:column;gap:4px;}
 .cobcell{display:flex;flex-direction:column;gap:4px;align-items:flex-start;}
 .cobcell select{max-width:190px;}
@@ -2151,7 +2152,7 @@ function formaCobrancaCell(obra,e){
     conta=contas.length ? `<select class="etConta" ${ref} style="margin-top:3px;"><option value="">— conta de recebimento —</option>${contas.map(c=>`<option value="${esc(c.id)}" ${c.id===et.contaId?'selected':''}>${esc(contaRotulo(c))}</option>`).join('')}</select>`
       : `<div class="small neg" style="margin-top:3px;">${obra.empresaId?'Cadastre as contas da empresa em Colaboradores.':'Defina a empresa da obra.'}</div>`;
   }
-  return `<div class="cobcell">${sel}${conta}<button class="btn secondary etCob" ${ref} title="Texto com os dados para enviar ao cliente">Dados p/ cobrança</button></div>`;
+  return `<div class="cobcell">${sel}${conta}</div>`;
 }
 function resumoView(){
   const resumosPorObra=obrasVisiveis().map(obra=>({obra, etapas:resumoEtapasObra(obra), valorTotalObra:calcObra(obra).valorTotal}));
@@ -2185,7 +2186,7 @@ function resumoView(){
       return `<tr>
         <td><b>${esc(e.nome)}</b><div class="small">${e.aditivoId?'aditivo':pct(e.pct)} · ${situacao}</div></td>
         <td class="num">${fmt(e.valor)}${e.travado?' <span title="Valor congelado: já há NF emitida ou recebimento, então mudanças no contrato não alteram esta etapa">🔒</span>':''}${e.recebido>0.005?`<div class="small">recebido ${fmt(Math.min(e.recebido,e.valor))}</div>`:''}</td>
-        <td><div class="stk"><input type="text" class="nfNumero" data-o="${esc(obra.id)}" data-i="${e.idx}" value="${e.nfNumero||''}" placeholder="nº da NF" style="width:100px;"><input type="text" inputmode="numeric" class="nfData dateBr" data-o="${esc(obra.id)}" data-i="${e.idx}" value="${isoToBr(e.nfData)}" placeholder="emissão dd/mm/aaaa" maxlength="10" style="width:130px;"></div></td>
+        <td><div class="row2"><input type="text" class="nfNumero" data-o="${esc(obra.id)}" data-i="${e.idx}" value="${e.nfNumero||''}" placeholder="nº da NF" style="width:90px;"><input type="text" inputmode="numeric" class="nfData dateBr" data-o="${esc(obra.id)}" data-i="${e.idx}" value="${isoToBr(e.nfData)}" placeholder="emissão" maxlength="10" style="width:105px;"></div></td>
         <td><div class="stk"><input type="text" inputmode="numeric" class="etapaVenc dateBr" data-o="${esc(obra.id)}" data-i="${e.idx}" value="${isoToBr(e.vencimento)}" placeholder="dd/mm/aaaa" maxlength="10" style="width:130px;${vencido?'border-color:var(--bad);color:var(--bad);':''}">${vencido&&!e.pago&&e.recebido<=0.005?'<span class="badge" style="background:var(--bad);color:#fff;width:fit-content;">Vencida</span>':''}</div></td>
         <td style="min-width:190px;">${formaCobrancaCell(obra,e)}</td>
         <td style="min-width:230px;">${e.pago?'<span class="badge badge-faturada">Recebido</span>':(e.recebido>0.005?`<span class="badge badge-concluida">Parcial</span> <span class="small">falta ${fmt(e.saldo)}</span>`:'')}${baixaWidget('etapa',obra.id,e.idx,'',e.saldo,e.baixas,'Receber')}</td>
@@ -3278,7 +3279,6 @@ function attachMain(){
 
     document.querySelectorAll('.etForma').forEach(i=>i.onchange=e=>{ const o=DATA.obras.find(x=>x.id===i.dataset.o); const et=o&&o.etapasPagamento[i.dataset.i]; if(!et) return; et.formaPgto=e.target.value; if(!et.formaPgto) delete et.formaPgto; else if(!et.contaId){ const cs=contasDaEmpresa(o.empresaId); if(cs.length) et.contaId=cs[0].id; } save(DATA); setTimeout(render,0); });
     document.querySelectorAll('.etConta').forEach(i=>i.onchange=e=>{ const o=DATA.obras.find(x=>x.id===i.dataset.o); const et=o&&o.etapasPagamento[i.dataset.i]; if(!et) return; et.contaId=e.target.value; if(!et.contaId) delete et.contaId; save(DATA); setTimeout(render,0); });
-    document.querySelectorAll('.etCob').forEach(b=>b.onclick=()=>abrirCobranca(b.dataset.o,b.dataset.i));
     // Campos de data digitados (dd/mm/aaaa): aplica máscara enquanto digita e converte p/ ISO ao sair do campo.
     document.querySelectorAll('.dateBr').forEach(i=>i.oninput=()=>maskDateBr(i));
     document.querySelectorAll('.nfData').forEach(i=>i.onchange=e=>{
