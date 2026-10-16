@@ -5,7 +5,7 @@ const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwrig
   await p.goto('file:///home/claude/financeiro-et-projetos/index.html'); await p.waitForTimeout(500);
   let ok=0,ko=0; const T=(n,c,d)=>{c?ok++:ko++;console.log((c?'PASS ':'FAIL ')+n+(d!==undefined?' '+JSON.stringify(d):''));};
   await p.evaluate(()=>{ SESSION={role:'admin'}; DATA.tiposServico=[{id:'t1',nome:'E'}]; DATA.colaboradores=[];
-    DATA.obras=[{id:'o1',nomeObra:'M',codigo:'x',status:'andamento',empresaId:'',cliente:{nome:'c'},servicos:[{id:'s1',tipoId:'t1',valorTotal:100000,imposto:17,despesas:[],aditivos:[]}],etapasPagamento:[{id:'a',nome:'Básico',pct:50,baixas:[]},{id:'b',nome:'Exec',pct:50,baixas:[]}],despesasObra:[],equipe:[]}]; TAB='resumo'; render(); });
+    DATA.obras=[{id:'o1',nomeObra:'M',codigo:'x',status:'andamento',empresaId:'',cliente:{nome:'c'},servicos:[{id:'s1',tipoId:'t1',valorTotal:100000,imposto:17,despesas:[],aditivos:[]}],etapasPagamento:[{id:'a',nome:'Básico',pct:50,baixas:[]},{id:'b',nome:'Exec',pct:50,baixas:[]}],despesasObra:[],equipe:[]}]; TAB='resumo'; SEL_RESUMO='o1'; render(); });
   const t=await p.innerText('.cobtab');
   T('cabeçalhos Valor bruto e Líquido', /valor bruto/i.test(t)&&/líquido/i.test(t));
   T('50.000 → líquido 46.925', /46\.925,00/.test(t), t.slice(0,300));

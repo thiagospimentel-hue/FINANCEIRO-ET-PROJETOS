@@ -15,7 +15,7 @@ const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwrig
   await set(0,'apelido','Itaú principal'); await set(0,'banco','Itaú'); await set(0,'agencia','1234'); await set(0,'conta','56789-0'); await set(0,'pix','05.445.023/0001-23');
   await set(1,'apelido','Sicoob'); await set(1,'banco','Sicoob'); await set(1,'agencia','4321'); await set(1,'conta','11111-2');
   T('dados das contas gravados', await p.evaluate(()=>{const c=DATA.minhasEmpresas[0].contas; return c[0].banco==='Itaú'&&c[0].conta==='56789-0'&&c[1].apelido==='Sicoob';}));
-  await p.evaluate(()=>{ TAB='resumo'; render(); });
+  await p.evaluate(()=>{ TAB='resumo'; SEL_RESUMO=DATA.obras[0].id; render(); });
   await p.selectOption('.etForma','deposito'); await p.waitForTimeout(100);
   T('depósito escolhido e conta padrão definida', await p.evaluate(()=>{const e=DATA.obras[0].etapasPagamento[0]; return e.formaPgto==='deposito'&&!!e.contaId;}));
   await p.selectOption('.etConta',{index:2}); await p.waitForTimeout(100);

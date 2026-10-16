@@ -923,6 +923,7 @@ let FILTER_DASH_SEL=[]; let COLAB_OBRA_ABERTA={};
 let FILTER_CONTAS='';
 let FILTER_CONTAS_MES=new Date().toISOString().slice(0,7); // '' = todos os meses
 let FILTER_EMPRESA='';
+let SEL_RESUMO='', RESUMO_BUSCA='', RESUMO_CHIP='';
 let FAT_MES=''; let FAT_EMP='';
 let PENDING_DEL='';
 
@@ -1303,6 +1304,9 @@ function mainView(){
       <p class="small">A nuvem já tinha dados e eles foram carregados aqui. Os dados que estavam só neste navegador foram guardados à parte. Se eram os corretos, envie-os para a nuvem (isso substitui o que está lá).</p>
       <button class="btn" id="enviarLocal">Enviar os dados deste navegador para a nuvem</button> <button class="btn secondary" id="descartarLocal">Descartar, manter os da nuvem</button>
     </div>`; }catch(e){} }
+  // Alerta de NF/etapa vencida a receber (aparece em todas as telas do administrador)
+  if(admin){ const hj=hojeISO(); let nV=0, vV=0, nO=0; obrasVisiveis().forEach(o=>{ let k=0; (o.etapasPagamento||[]).forEach(e=>{ if(!e.vencimento||e.vencimento>=hj) return; const sd=valorEtapaContrato(o,e)-baixaTotal(e); if(sd>0.005){ nV++; vV+=sd; k++; } }); if(k) nO++; });
+    if(nV) banner+=`<div class="card" style="border-color:var(--bad);background:var(--bad-bg,rgba(220,60,60,.10));padding:10px 14px;"><div class="row-flex" style="justify-content:space-between;flex-wrap:wrap;gap:8px;"><span>⚠️ <b>${nV} cobrança(s) vencida(s)</b> em ${nO} obra(s) — <b class="neg">${fmt(vV)}</b> a receber já passou do vencimento.</span><button class="btn secondary" id="alertaVenc">Ver vencidas</button></div></div>`; }
   const info=admin?(TAB_INFO[TAB]||TAB_INFO.colaboradores):['Meus pagamentos','Etapas, aprovações e valores a receber'];
   const foot=`<div class="side-foot"><div class="user">${esc(nome||'')}</div><span id="syncChip">${SYNC_LABEL[SYNC.state]||''}</span>${adminTools}${SB.on?'<button id="alterarSenha">Alterar senha</button>':''}<button id="logout">Sair</button></div>`;
   const side=`<aside class="side"><div class="brand"><img src="${LOGO_ET}" alt="ET Engenharia e Projetos"><span>Financeiro · gestão de obras e caixa</span></div>${tabsHtml}${foot}</aside>`;
@@ -1383,6 +1387,7 @@ function attachSync(){
       }catch(err){ alert('Não foi possível importar: '+err.message); }
     };
   }
+  const alv=document.getElementById('alertaVenc'); if(alv) alv.onclick=()=>{ TAB='resumo'; RESUMO_CHIP='venc'; SEL_RESUMO=''; render(); window.scrollTo(0,0); };
   const env=document.getElementById('enviarLocal');
   if(env) env.onclick=()=>{ try{ const d=JSON.parse(localStorage.getItem(PRE_KEY)); ensureTiposPadrao(d); DATA=d; localStorage.removeItem(PRE_KEY); save(DATA); render(); }catch(e){} };
   const desc=document.getElementById('descartarLocal');
@@ -2346,7 +2351,7 @@ function resumoView(){
   const STATUS_LABEL_RESUMO={pronto:'Pronto para cobrar',parcial:'Em andamento',pendente:'Pendente',sem_entrega:'—'};
   const STATUS_BADGE_RESUMO={pronto:'faturada',parcial:'concluida',pendente:'andamento'};
   const hoje=hojeISO();
-  const obrasHtml=resumosPorObra.map(({obra,etapas})=>{
+  const cardObra=({obra,etapas})=>{
     let totValor=0, totRec=0;
     const rows=etapas.map(e=>{
       totValor+=e.valor; totRec+=Math.min(e.recebido,e.valor);
@@ -2374,9 +2379,31 @@ function resumoView(){
       <tr class="hdr"><td>Total</td><td class="num">${fmt(totValor)}</td><td class="num">${fmt(liqFonte(totValor))}</td><td colspan="2" class="num">Recebido: ${fmt(totRec)}<div class="small">líquido ${fmt(liqFonte(totRec))}</div></td><td colspan="2" class="num">A receber: ${fmt(Math.max(0,totValor-totRec))}<div class="small">líquido ${fmt(liqFonte(Math.max(0,totValor-totRec)))}</div></td></tr></table>
       </div>
     </div>`;
-  }).join('');
-
-  return prontasHtml + obrasHtml;
+  };
+  // ---- lista compacta (uma linha por obra) + abertura de uma obra por vez ----
+  const info=resumosPorObra.map(it=>{ let tv=0,tr=0,venc=0,prt=0; it.etapas.forEach(e=>{ tv+=e.valor; tr+=Math.min(e.recebido,e.valor); if(e.vencimento&&!e.pago&&e.vencimento<hoje) venc++; if(e.status==='pronto'&&!e.pago) prt++; });
+    return {...it,tv,tr,sal:Math.max(0,tv-tr),venc,prt}; });
+  const idxSel=info.findIndex(x=>x.obra.id===SEL_RESUMO);
+  if(idxSel>=0){ const ant=info[idxSel-1], prox=info[idxSel+1];
+    return `<div class="row-flex" style="justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px;"><button class="btn secondary resVoltar">← Voltar à lista (${info.length} obras)</button>
+      <div class="row-flex" style="gap:6px;"><button class="btn secondary resAbrir" ${ant?`data-o="${esc(ant.obra.id)}" title="${esc(ant.obra.nomeObra)}"`:'disabled'}>‹ Anterior</button><span class="small">${idxSel+1} de ${info.length}</span><button class="btn secondary resAbrir" ${prox?`data-o="${esc(prox.obra.id)}" title="${esc(prox.obra.nomeObra)}"`:'disabled'}>Próximo ›</button></div></div>${cardObra(info[idxSel])}`; }
+  const nChip={'':info.length,saldo:info.filter(x=>x.sal>0.005).length,venc:info.filter(x=>x.venc>0).length,pronta:info.filter(x=>x.prt>0).length};
+  const chipR=(k,l)=>`<button class="chip chipRes ${RESUMO_CHIP===k?'active':''}" data-k="${k}">${l}<span class="n">${nChip[k]}</span></button>`;
+  const lista=info.filter(x=>!RESUMO_CHIP||(RESUMO_CHIP==='saldo'&&x.sal>0.005)||(RESUMO_CHIP==='venc'&&x.venc>0)||(RESUMO_CHIP==='pronta'&&x.prt>0));
+  const linhasR=lista.map(x=>`<tr class="resLinha" data-o="${esc(x.obra.id)}" data-q="${esc(((x.obra.nomeObra||'')+' '+(x.obra.codigo||'')+' '+((x.obra.cliente||{}).nome||'')).toLowerCase())}" style="cursor:pointer;">
+      <td><b>${esc(x.obra.nomeObra)}</b><div class="small">${x.obra.codigo?esc(x.obra.codigo)+' · ':''}${esc((x.obra.cliente||{}).nome||'')}</div></td>
+      <td class="num">${fmt(x.tv)}</td><td class="num">${fmt(liqFonte(x.tv))}</td><td class="num pos">${fmt(x.tr)}</td><td class="num ${x.sal>0.005?'neg':''}"><b>${fmt(x.sal)}</b></td>
+      <td>${x.prt?`<span class="badge badge-faturada">${x.prt} p/ cobrar</span> `:''}${x.venc?`<span class="badge" style="background:var(--bad);color:#fff;">${x.venc} vencida(s)</span>`:''}</td>
+      <td><button class="btn secondary resAbrir" data-o="${esc(x.obra.id)}">Abrir</button></td></tr>`).join('');
+  const sT=lista.reduce((a,x)=>a+x.tv,0), sR=lista.reduce((a,x)=>a+x.tr,0);
+  const listaCard=`<div class="card"><div class="row-flex" style="justify-content:space-between;flex-wrap:wrap;gap:8px;"><h2 style="margin:0;">Obras <span class="small">(${info.length})</span></h2>
+      <input type="text" id="resBusca" placeholder="Buscar obra, código ou cliente…" value="${esc(RESUMO_BUSCA)}" style="max-width:300px;"></div>
+    <div class="chips" style="margin:8px 0;">${chipR('','Todas')}${chipR('saldo','A receber')}${chipR('venc','Vencidas')}${chipR('pronta','Prontas p/ cobrar')}</div>
+    <div style="overflow-x:auto;"><table><tr><th>Obra</th><th class="num">Valor bruto</th><th class="num">Líquido (−6,15%)</th><th class="num">Recebido</th><th class="num">A receber</th><th>Situação</th><th></th></tr>
+    ${linhasR||'<tr><td colspan="7" class="small">Nenhuma obra neste filtro.</td></tr>'}
+    <tr class="hdr"><td>Total (${lista.length})</td><td class="num">${fmt(sT)}</td><td class="num">${fmt(liqFonte(sT))}</td><td class="num">${fmt(sR)}</td><td class="num">${fmt(Math.max(0,sT-sR))}</td><td colspan="2"></td></tr></table></div>
+    <p class="small" style="margin-top:6px;">Clique em uma obra para abrir só a cobrança dela.</p></div>`;
+  return prontasHtml + listaCard;
 }
 
 // ---- Filtro global por empresa / CNPJ (só afeta a visão do admin) ----
@@ -3532,6 +3559,11 @@ function attachMain(){
   }
 
   if(TAB==='resumo' && SESSION.role==='admin'){
+    document.querySelectorAll('.resAbrir').forEach(b=>b.onclick=e=>{ e.stopPropagation(); if(!b.dataset.o) return; SEL_RESUMO=b.dataset.o; render(); window.scrollTo(0,0); });
+    document.querySelectorAll('.resLinha').forEach(tr=>tr.onclick=()=>{ SEL_RESUMO=tr.dataset.o; render(); window.scrollTo(0,0); });
+    document.querySelectorAll('.resVoltar').forEach(b=>b.onclick=()=>{ SEL_RESUMO=''; render(); window.scrollTo(0,0); });
+    document.querySelectorAll('.chipRes').forEach(b=>b.onclick=()=>{ RESUMO_CHIP=b.dataset.k; render(); });
+    const rb=document.getElementById('resBusca'); if(rb) rb.oninput=()=>{ RESUMO_BUSCA=rb.value; const q=rb.value.toLowerCase().trim(); document.querySelectorAll('.resLinha').forEach(tr=>{ tr.style.display=!q||tr.dataset.q.includes(q)?'':'none'; }); };
     document.querySelectorAll('.nfNumero').forEach(i=>i.onchange=e=>{const obra=DATA.obras.find(o=>o.id===i.dataset.o); if(!obra)return; const et=obra.etapasPagamento[i.dataset.i]; if(!et)return; et.nfNumero=e.target.value; sincEtapaContrato(obra,et); save(DATA);});
 
     document.querySelectorAll('.etForma').forEach(i=>i.onchange=e=>{ const o=DATA.obras.find(x=>x.id===i.dataset.o); const et=o&&o.etapasPagamento[i.dataset.i]; if(!et) return; et.formaPgto=e.target.value; if(!et.formaPgto) delete et.formaPgto; else if(!et.contaId){ const cs=contasDaEmpresa(o.empresaId); if(cs.length) et.contaId=cs[0].id; } sincContasCaixa(); save(DATA); setTimeout(render,0); });
