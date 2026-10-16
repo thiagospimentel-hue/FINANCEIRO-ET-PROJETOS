@@ -1428,6 +1428,14 @@ function mediaEtapas(cfg){
   if(ret>0) et.push({nome:'Retenção para ajustes ('+ret+'%)',pct:ret,retencao:true,concluido:false,data:'',aprovado:false,baixas:[]});
   return et;
 }
+// Retenção da média: fica disponível para aprovação quando a obra é concluída (ou faturada); se a obra reabrir, volta a reter.
+function sincRetencoes(obra){
+  const fim=obra.status==='concluida'||obra.status==='faturada';
+  (obra.equipe||[]).forEach(m=>(m.etapas||[]).forEach(e=>{
+    if(!e.retencao||e.aprovado) return;
+    if(fim){ e.concluido=true; if(!e.data) e.data=hojeISO(); } else { e.concluido=false; e.data=''; }
+  }));
+}
 function membroTemMovimento(m){ return (m.etapas||[]).some(e=>(e.baixas||[]).length>0||e.aprovado); }
 // modo: 'media' | 'entrega'; obraId vazio = todas as obras do colaborador. Não mexe em quem já tem aprovação/pagamento.
 function aplicarModeloPagamento(colabId,modo,cfg,obraId){
@@ -1441,6 +1449,7 @@ function aplicarModeloPagamento(colabId,modo,cfg,obraId){
       else { delete m.modelo; delete m.media; m.etapas=etapasCoordPadrao(); }
       ok++;
     });
+    sincRetencoes(o);
   });
   return {ok,bloq};
 }
@@ -1462,7 +1471,7 @@ function mediaPainelHtml(obra,c,idxs){
       <label class="small">dia do pagamento <input type="number" min="1" max="28" class="pct-input gm-dia" value="${cfg.dia}"></label>
     </div>
     <div class="row-flex" style="gap:8px;margin-top:6px;"><button class="btn gmaplicar" data-o="${oid}" data-c="${cc}" data-esc="obra">Aplicar nesta obra</button><button class="btn secondary gmaplicar" data-o="${oid}" data-c="${cc}" data-esc="todas">Aplicar em todas as obras dele(a)</button></div>
-    <p class="small">No modo média, o total que ele(a) vai receber em cada obra é dividido em parcelas mensais (aparecem em Aprovações a partir do mês de cada uma) e a retenção só é paga quando você liberar. Quem já tem aprovação ou pagamento não é alterado.</p>
+    <p class="small">No modo média, o total que ele(a) vai receber em cada obra é dividido em parcelas mensais (aparecem em Aprovações a partir do mês de cada uma) e a retenção (saldo final) fica guardada até a obra ser marcada como Concluída — aí ela aparece em Aprovações para o ajuste final. Também dá para liberar antes pelo botão abaixo. Quem já tem aprovação ou pagamento não é alterado.</p>
     ${resumo}
     ${idxs.map(i=>eq[i]).filter(m=>m.etapas&&m.etapas.some(e=>e.retencao&&!e.aprovado)).map(m=>`<button class="btn secondary gmliberar" data-o="${oid}" data-id="${esc(m.id)}">Liberar retenção (${esc(m.papel||'')} ${pct(m.etapas.find(e=>e.retencao).pct)})</button>`).join(' ')}
   </div>`;
@@ -2920,7 +2929,7 @@ function attachMain(){
       DATA.obras.push({id,nomeObra:'Nova obra',codigo,status:'andamento',dataInicio:'',dataPrevisao:'',empresaId:'',cliente:{nome:'',documento:'',telefone:'',email:'',endereco:'',construtora:'',spe:''},condicoes:'',etapasPagamento:etapasPadrao(),despesasObra:[{id:novoId('do'),nome:'ART',fornecedor:'CREA',colaboradorId:'',pct:0,modo:'pct'},{id:novoId('do'),nome:'Lista de materiais',fornecedor:'',colaboradorId:'',pct:0,modo:'pct'}],equipe:[],servicos:[{id:'s'+Date.now(),tipoId:DATA.tiposServico[0]?.id||'',valorTotal:0,imposto:17,despesas:[],aditivos:[]}],reajustes:[]});
       OPEN_OBRA=id; save(DATA); render();
     };
-    document.querySelectorAll('.obraCampo').forEach(i=>i.onchange=e=>{const obra=DATA.obras.find(o=>o.id===i.dataset.o);obra[i.dataset.f]=e.target.value;save(DATA);render();});
+    document.querySelectorAll('.obraCampo').forEach(i=>i.onchange=e=>{const obra=DATA.obras.find(o=>o.id===i.dataset.o);obra[i.dataset.f]=e.target.value; if(i.dataset.f==='status') sincRetencoes(obra); save(DATA);render();});
     const filterStatusSel=document.getElementById('filterStatus');
     if(filterStatusSel) filterStatusSel.onchange=e=>{FILTER_STATUS=e.target.value;render();};
     document.querySelectorAll('.relatorioobra').forEach(b=>b.onclick=()=>{ abrirRelatorioObra(b.dataset.o); });

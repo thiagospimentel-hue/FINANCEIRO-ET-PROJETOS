@@ -32,6 +32,10 @@ const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwrig
   if(await p.locator('.gdet[data-c="u1"]').count()) { const t=await p.locator('.gm-modo').count(); if(!t) await p.click('.gdet[data-c="u1"]'); }
   await p.click('.gmliberar'); await p.waitForTimeout(150);
   T('retenção liberada vira a pagar', await p.evaluate(()=>{const e=DATA.obras[0].equipe[0].etapas[6]; return e.aprovado&&e.concluido&&!!e.data;}));
+  await p.evaluate(()=>{ DATA.obras[1].status='concluida'; aplicarModeloPagamento('u1','media',{inicio:'2026-05',meses:6,ret:10,dia:5},'o2'); });
+  T('obra concluída libera a retenção para aprovação', await p.evaluate(()=>{ const e=DATA.obras[1].equipe[0].etapas[6]; return e.retencao&&e.concluido&&!e.aprovado&&aprovacoesPendentes().some(x=>x.e===e); }));
+  await p.evaluate(()=>{ DATA.obras[1].status='andamento'; sincRetencoes(DATA.obras[1]); });
+  T('obra reaberta volta a reter', await p.evaluate(()=>!DATA.obras[1].equipe[0].etapas[6].concluido));
   // novo vínculo herda média
   await p.evaluate(()=>{ equipeGridSet('o2','u1','',0); equipeGridSet('o2','u1','so2',10); });
   T('sem erros', errs.length===0, errs); console.log(ok+' ok, '+ko+' falhas'); await b.close(); process.exit(ko?1:0);
