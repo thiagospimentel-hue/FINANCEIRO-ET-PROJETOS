@@ -27,9 +27,11 @@ const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwrig
   const cm=await p.evaluate(()=>confMensalColab('u1').map(r=>r.dif+'/'+r.acum));
   T('diferença e acumulado (500, depois 0, depois -500...)', cm[0]==='500/500'&&cm[1]==='-500/0'&&cm[2]==='4500/4500', cm);
   T('pago manual gravado no colaborador', await p.evaluate(()=>DATA.colaboradores[0].pagoMes['2026-11']===4000&&DATA.colaboradores[0].pagoMes['2026-12']===5000));
-  T('grupo nasce travado (checkbox da obra bloqueado) e tem botão Voltar para por entrega', await p.locator('.mcOb[disabled]').count()===2 && await p.locator('.mcDesfazer').count()===1 && await p.evaluate(()=>DATA.obras[0].equipe[0].media.travado===true));
+  T('grupo nasce travado (checkbox da obra bloqueado) e protegido (sem botão de voltar até destravar)', await p.locator('.mcOb[disabled]').count()===2 && await p.locator('.mcDesfazer').count()===0 && await p.evaluate(()=>DATA.obras[0].equipe[0].media.travado===true));
   await p.evaluate(()=>{ aplicarModeloPagamento('u1','entrega',{},['o1']); }); // aplicar sem destravar não altera
   T('grupo travado não é alterado por aplicar comum', await p.evaluate(()=>DATA.obras[0].equipe[0].modelo==='media'));
+  await p.click('.mcTrava'); await p.waitForTimeout(200);
+  T('destravar libera o botão Voltar para por entrega', await p.locator('.mcDesfazer').count()===1);
   await p.click('.mcDesfazer'); await p.waitForTimeout(200);
   T('voltar por entrega nas marcadas', await p.evaluate(()=>DATA.obras.map(o=>o.equipe[0].modelo||'').join('|'))==='||');
   await p.evaluate(()=>{ aprovarEntrega(DATA.obras[1],DATA.obras[1].equipe[0],DATA.obras[1].equipe[0].etapas[0]); render(); });
