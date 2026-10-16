@@ -2098,6 +2098,15 @@ function obrasView(){
 const TIPOS_CONTA=['Conta corrente','Poupança','Conta pagamento'];
 function contasDaEmpresa(empId){ const e=(DATA.minhasEmpresas||[]).find(x=>x.id===empId); return (e&&e.contas)||[]; }
 function contaRotulo(c){ return [c.apelido||c.banco||'Conta', c.banco&&c.apelido?c.banco:'', c.agencia?'ag. '+c.agencia:'', c.conta?'c/ '+c.conta:''].filter(Boolean).join(' · '); }
+function sincContasCaixa(){
+  let mudou=false;
+  (DATA.caixa||[]).forEach(m=>{
+    if(m.contaId||!m.origem||m.origem.tipo!=='etapa'||m.origem.estorno||m.tipo!=='entrada') return;
+    const o=DATA.obras.find(x=>x.id===m.origem.obraId); const et=o&&(o.etapasPagamento||[]).find(x=>x.id===m.origem.refId);
+    if(et&&et.contaId&&acharConta(et.contaId)){ m.contaId=et.contaId; mudou=true; }
+  });
+  return mudou;
+}
 function acharConta(contaId){ for(const e of (DATA.minhasEmpresas||[])){ const c=(e.contas||[]).find(x=>x.id===contaId); if(c) return {emp:e,conta:c}; } return null; }
 const FORMA_LABEL={deposito:'Depósito / transferência',boleto:'Boleto bancário'};
 function textoCobranca(obra,e){
@@ -2536,6 +2545,7 @@ function conferenciaCard(){
     <table><tr><th>Baixa</th><th>Data</th><th class="num">Valor</th><th></th></tr>${rows}</table></div>`;
 }
 function contasCaixaCard(){
+  if(sincContasCaixa()) setTimeout(()=>save(DATA),0);
   const linhas=[];
   (DATA.minhasEmpresas||[]).forEach(e=>(e.contas||[]).forEach(c=>{
     let ent=0,sai=0; DATA.caixa.filter(movVisivel).forEach(m=>{ if(m.contaId!==c.id) return; if(m.tipo==='entrada') ent+=m.valor; else sai+=m.valor; });
@@ -3280,8 +3290,8 @@ function attachMain(){
   if(TAB==='resumo' && SESSION.role==='admin'){
     document.querySelectorAll('.nfNumero').forEach(i=>i.onchange=e=>{const obra=DATA.obras.find(o=>o.id===i.dataset.o); if(!obra)return; const et=obra.etapasPagamento[i.dataset.i]; if(!et)return; et.nfNumero=e.target.value; sincEtapaContrato(obra,et); save(DATA);});
 
-    document.querySelectorAll('.etForma').forEach(i=>i.onchange=e=>{ const o=DATA.obras.find(x=>x.id===i.dataset.o); const et=o&&o.etapasPagamento[i.dataset.i]; if(!et) return; et.formaPgto=e.target.value; if(!et.formaPgto) delete et.formaPgto; else if(!et.contaId){ const cs=contasDaEmpresa(o.empresaId); if(cs.length) et.contaId=cs[0].id; } save(DATA); setTimeout(render,0); });
-    document.querySelectorAll('.etConta').forEach(i=>i.onchange=e=>{ const o=DATA.obras.find(x=>x.id===i.dataset.o); const et=o&&o.etapasPagamento[i.dataset.i]; if(!et) return; et.contaId=e.target.value; if(!et.contaId) delete et.contaId; save(DATA); setTimeout(render,0); });
+    document.querySelectorAll('.etForma').forEach(i=>i.onchange=e=>{ const o=DATA.obras.find(x=>x.id===i.dataset.o); const et=o&&o.etapasPagamento[i.dataset.i]; if(!et) return; et.formaPgto=e.target.value; if(!et.formaPgto) delete et.formaPgto; else if(!et.contaId){ const cs=contasDaEmpresa(o.empresaId); if(cs.length) et.contaId=cs[0].id; } sincContasCaixa(); save(DATA); setTimeout(render,0); });
+    document.querySelectorAll('.etConta').forEach(i=>i.onchange=e=>{ const o=DATA.obras.find(x=>x.id===i.dataset.o); const et=o&&o.etapasPagamento[i.dataset.i]; if(!et) return; et.contaId=e.target.value; if(!et.contaId) delete et.contaId; sincContasCaixa(); save(DATA); setTimeout(render,0); });
     // Campos de data digitados (dd/mm/aaaa): aplica máscara enquanto digita e converte p/ ISO ao sair do campo.
     document.querySelectorAll('.dateBr').forEach(i=>i.oninput=()=>maskDateBr(i));
     document.querySelectorAll('.nfData').forEach(i=>i.onchange=e=>{

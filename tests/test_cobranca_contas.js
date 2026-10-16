@@ -27,6 +27,9 @@ const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwrig
   T('recebimento grava a conta no caixa', mv&&mv.tipo==='entrada'&&mv.valor===50000&&!!mv.contaId, mv);
   await p.evaluate(()=>{ TAB='caixa'; render(); });
   T('card de movimento por conta mostra o saldo', (await p.content()).includes('Movimento por conta bancária') && /R\$\s*50\.000,00/.test(await p.locator('text=Movimento por conta bancária').locator('..').innerText()));
+  await p.evaluate(()=>{ const m=DATA.caixa.find(x=>x.origem&&x.origem.tipo==='etapa'); delete m.contaId; TAB='obras'; render(); TAB='caixa'; render(); });
+  await p.waitForTimeout(200);
+  T('recebimento antigo herda a conta da etapa', await p.evaluate(()=>{const m=DATA.caixa.find(x=>x.origem&&x.origem.tipo==='etapa'); return m.contaId===DATA.obras[0].etapasPagamento[0].contaId;}));
   await p.evaluate(()=>{ DATA.caixa.push({id:'mx1',data:'2026-10-01',desc:'Antigo sem conta',tipo:'entrada',valor:1000,obraId:'',colaboradorId:''}); render(); });
   T('lançamento sem conta aparece em "Sem conta informada"', /Sem conta informada/.test(await p.innerText('body')));
   await p.selectOption('.movContaSel[data-id="mx1"]',{index:1}); await p.waitForTimeout(150);
