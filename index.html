@@ -903,7 +903,7 @@ let FILTER_STATUS='';
 let FILTER_FAT_MES='';
 let FILTER_FAT_STATUS='';
 let FILTER_DASH_BUSCA='', FILTER_DASH_STATUS='', FILTER_DASH_EMP='';
-let DASH_VAL='bruto'; let FILTER_DASH_SEL=[];
+let FILTER_DASH_SEL=[];
 let FILTER_CONTAS='';
 let FILTER_CONTAS_MES=new Date().toISOString().slice(0,7); // '' = todos os meses
 let FILTER_EMPRESA='';
@@ -1772,21 +1772,22 @@ function dashFiltroBar(total,achadas){
   </div>`;
 }
 function totaisSimples(obras){
-  let tot=0,fat=0;
-  obras.forEach(o=>{ if((o.status||'andamento')==='cancelada') return; (o.etapasPagamento||[]).forEach(e=>{ const v=valorEtapaContrato(o,e); tot+=v; if(e.nfNumero||e.nfData) fat+=v; }); });
-  const f=DASH_VAL==='liquido'?liqFonte:(x=>x);
-  return {tot:f(tot),fat:f(fat),aFat:f(tot)-f(fat),n:obras.filter(o=>(o.status||'andamento')!=='cancelada').length};
+  const linhas=obras.filter(o=>(o.status||'andamento')!=='cancelada').map(o=>{
+    const r=calcObra(o); let imp=0; o.servicos.forEach(sv=>{ imp+=calcServico(sv).imp; });
+    let fat=0,aFat=0; (o.etapasPagamento||[]).forEach(e=>{ const v=valorEtapaContrato(o,e); if(e.nfNumero||e.nfData) fat+=v; else aFat+=v; });
+    return {o,total:r.valorTotal,imp,desp:r.despTotal,fat,aFat};
+  });
+  const tot=linhas.reduce((t,l)=>({total:t.total+l.total,imp:t.imp+l.imp,desp:t.desp+l.desp,fat:t.fat+l.fat,aFat:t.aFat+l.aFat}),{total:0,imp:0,desp:0,fat:0,aFat:0});
+  return {linhas,tot};
 }
 function totaisSimplesCard(obras){
-  const t=totaisSimples(obras);
-  return `<div class="card"><div class="row-flex" style="justify-content:space-between;flex-wrap:wrap;gap:8px;align-items:center;"><h2 style="margin:0;">Obras fechadas — total, faturado e a faturar</h2>
-    <select id="dashVal" title="Valor bruto ou líquido (após ${String(RET_FONTE).replace('.',',')}% retido na fonte)"><option value="bruto" ${DASH_VAL==='bruto'?'selected':''}>Valor bruto</option><option value="liquido" ${DASH_VAL==='liquido'?'selected':''}>Valor líquido (−${String(RET_FONTE).replace('.',',')}%)</option></select></div>
-    <div class="grid3" style="margin-top:10px;">
-      <div><span class="small">Total das obras (${t.n})</span><br><b style="font-size:1.25em;">${fmt(t.tot)}</b></div>
-      <div><span class="small">Já faturado (NF emitida)</span><br><b class="pos" style="font-size:1.25em;">${fmt(t.fat)}</b></div>
-      <div><span class="small">A faturar (sem NF)</span><br><b style="font-size:1.25em;">${fmt(t.aFat)}</b></div>
-    </div>
-    <p class="small" style="margin:8px 0 0;">Soma das obras que aparecem nos filtros acima (busca, status, empresa ou obras clicadas); canceladas ficam de fora.</p></div>`;
+  const {linhas,tot}=totaisSimples(obras);
+  const row=(n,l,b)=>`<tr${b?' class="hdr"':''}><td>${n}</td><td class="num">${fmt(l.total)}</td><td class="num">${fmt(l.imp)}</td><td class="num">${fmt(l.desp)}</td><td class="num ${b?'':'pos'}">${fmt(l.fat)}</td><td class="num">${fmt(l.aFat)}</td></tr>`;
+  return `<div class="card"><h2>Valores por obra</h2>
+    <div style="overflow-x:auto;"><table><tr><th>Obra</th><th class="num">Valor total</th><th class="num">Impostos</th><th class="num">Despesas</th><th class="num">Faturado bruto</th><th class="num">A faturar bruto</th></tr>
+    ${linhas.map(l=>row(`<b>${esc(l.o.nomeObra)}</b> <span class="small">${esc(l.o.codigo||'')}</span>`,l,false)).join('')||'<tr><td colspan="6" class="small">Nenhuma obra nesse filtro.</td></tr>'}
+    ${linhas.length>1?row('Total ('+linhas.length+' obras)',tot,true):''}</table></div>
+    <p class="small" style="margin:8px 0 0;">Valor total = soma das disciplinas. Despesas = equipe + despesas da obra + coordenação. Faturado = etapas com NF emitida. Mostra as obras dos filtros acima (ou as que você marcar); canceladas ficam de fora.</p></div>`;
 }
 function dashboardView(){
   const obrasTodas=obrasVisiveis();
@@ -3361,7 +3362,6 @@ function attachMain(){
     const dB=document.getElementById('dashBusca');
     if(dB) dB.oninput=e=>{ FILTER_DASH_BUSCA=e.target.value; render(); const n=document.getElementById('dashBusca'); if(n){ n.focus(); try{ n.setSelectionRange(n.value.length,n.value.length); }catch(_){} } };
     document.querySelectorAll('.dashChip').forEach(b=>b.onclick=()=>{ FILTER_DASH_SEL = FILTER_DASH_SEL.includes(b.dataset.id) ? FILTER_DASH_SEL.filter(x=>x!==b.dataset.id) : FILTER_DASH_SEL.concat(b.dataset.id); render(); });
-    const dV=document.getElementById('dashVal'); if(dV) dV.onchange=e=>{DASH_VAL=e.target.value;render();};
     const dS=document.getElementById('dashStatus'); if(dS) dS.onchange=e=>{FILTER_DASH_STATUS=e.target.value;render();};
     const dE=document.getElementById('dashEmp'); if(dE) dE.onchange=e=>{FILTER_DASH_EMP=e.target.value;render();};
     const dL=document.getElementById('dashLimpar'); if(dL) dL.onclick=()=>{FILTER_DASH_BUSCA='';FILTER_DASH_STATUS='';FILTER_DASH_EMP='';FILTER_DASH_SEL=[];FILTER_FAT_MES='';FILTER_FAT_STATUS='';render();};
