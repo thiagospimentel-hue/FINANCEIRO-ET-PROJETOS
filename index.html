@@ -959,8 +959,12 @@ function equipeTotalObra(obra){
   return (obra.equipe||[]).reduce((s,m)=>s+equipeMembroValor(obra,m),0);
 }
 // Despesas da obra (ART, lista de materiais...): % do líquido total da obra OU valor fixo editado à mão.
-function despObraValor(obra,d){ return r2(d.modo==='valor' ? (d.valor||0) : liquidoTotalObra(obra)*((d.pct||0)/100)); }
-function despObraPct(obra,d){ if(d.modo==='valor'){ const b=liquidoTotalObra(obra); return b? (d.valor||0)/b*100 : 0; } return d.pct||0; }
+// Despesa da obra pode ser vinculada a uma disciplina (d.servicoId): o % passa a ser sobre o líquido dela; sem vínculo = "Geral" (líquido total da obra).
+function despObraServ(obra,d){ return d.servicoId ? (obra.servicos||[]).find(sv=>sv.id===d.servicoId)||null : null; }
+function despObraBase(obra,d){ const sv=despObraServ(obra,d); return sv ? calcServico(sv).liquido : liquidoTotalObra(obra); }
+function servicoSubestacao(obra){ return (obra.servicos||[]).find(sv=>semAcento(tipoNome(sv.tipoId)).includes('subesta'))||null; }
+function despObraValor(obra,d){ return r2(d.modo==='valor' ? (d.valor||0) : despObraBase(obra,d)*((d.pct||0)/100)); }
+function despObraPct(obra,d){ if(d.modo==='valor'){ const b=despObraBase(obra,d); return b? (d.valor||0)/b*100 : 0; } return d.pct||0; }
 function despesasObraTotal(obra){ return (obra.despesasObra||[]).reduce((a,d)=>a+despObraValor(obra,d),0); }
 function calcObra(obra){
   let valorTotal=0,liquido=0,despTotal=0;
@@ -1562,7 +1566,7 @@ function resumoGridObra(obra){
   });
   const linhasDesp={}, ordemD=[];
   sv.forEach(s=>(s.despesas||[]).forEach(d=>{ const v=calcServico(s).liquido*((d.pct||0)/100); if(!v) return; const k=d.nome||'Outros'; if(!linhasDesp[k]){ linhasDesp[k]={nome:k,v:{}}; ordemD.push(k); } linhasDesp[k].v[s.id]=(linhasDesp[k].v[s.id]||0)+v; }));
-  const linhasObra=[]; (obra.despesasObra||[]).forEach(d=>{ const v=despObraValor(obra,d); if(v) linhasObra.push({nome:d.nome||'Despesa da obra',v:{[geral]:v}}); });
+  const linhasObra=[]; (obra.despesasObra||[]).forEach(d=>{ const v=despObraValor(obra,d); const col=despObraServ(obra,d)?d.servicoId:geral; if(v) linhasObra.push({nome:d.nome||'Despesa da obra',v:{[col]:v}}); });
   const tot={}; todasCols.forEach(c=>tot[c.id]=0);
   const soma=l=>todasCols.reduce((a,c)=>a+(l.v[c.id]||0),0);
   const mk=(l,rotulo)=>{ todasCols.forEach(c=>tot[c.id]+=(l.v[c.id]||0)); return `<tr><td>${rotulo}</td>${todasCols.map(c=>`<td class="num">${l.v[c.id]?fmt(l.v[c.id]):'—'}</td>`).join('')}<td class="num"><b>${fmt(soma(l))}</b></td></tr>`; };
@@ -2202,6 +2206,7 @@ function despesasObraBox(obra){
     return `<tr>
       <td><input type="text" class="dobraNome" data-o="${esc(obra.id)}" data-d="${esc(d.id)}" value="${esc(d.nome)}" style="width:100%;min-width:150px;"></td>
       <td><input type="text" class="dobraForn" list="listaForn" data-o="${esc(obra.id)}" data-d="${esc(d.id)}" value="${esc(d.fornecedor)}" placeholder="Fornecedor" style="width:110px;"></td>
+      <td><select class="dobraServ" data-o="${esc(obra.id)}" data-d="${esc(d.id)}" style="max-width:120px;"><option value="">Geral</option>${(obra.servicos||[]).map(sv=>`<option value="${esc(sv.id)}" ${sv.id===d.servicoId?'selected':''}>${esc(tipoNome(sv.tipoId))}</option>`).join('')}</select></td>
       <td><select class="dobraColab" data-o="${esc(obra.id)}" data-d="${esc(d.id)}" style="max-width:130px;"><option value="">— colaborador —</option>${colabOptions(d.colaboradorId||'')}</select></td>
       <td class="num"><input type="text" inputmode="decimal" class="dobraPct pct-input" data-o="${esc(obra.id)}" data-d="${esc(d.id)}" value="${(Math.round(pc*100)/100).toString().replace('.',',')}" ${d.modo==='valor'?'style="opacity:.6;" title="Calculado a partir do valor fixo"':''}>%</td>
       <td class="num">R$ <input type="text" inputmode="decimal" class="dobraVal val-input" data-o="${esc(obra.id)}" data-d="${esc(d.id)}" value="${v.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}"></td>
@@ -2209,11 +2214,11 @@ function despesasObraBox(obra){
       <td><input type="text" inputmode="numeric" class="dobraVenc dateBr" data-o="${esc(obra.id)}" data-d="${esc(d.id)}" value="${isoToBr(d.vencimento||'')}" placeholder="dd/mm/aaaa" maxlength="10" style="width:100px;"></td>
       <td class="num">${baixaTotal(d)>0?fmt(baixaTotal(d))+(baixaTotal(d)>=v-0.005&&v>0?' <span class="badge badge-faturada">Paga</span>':' <span class="badge badge-concluida">Parcial</span>'):'<span class="small">—</span>'}</td>
       <td><button class="btn danger dobraDel" data-o="${esc(obra.id)}" data-d="${esc(d.id)}" ${(d.baixas||[]).length?'disabled title="Desfaça os pagamentos em Contas a pagar antes de excluir"':''}>x</button></td></tr>`;
-  }).join('') || '<tr><td colspan="9" class="small">Nenhuma despesa da obra.</td></tr>';
+  }).join('') || '<tr><td colspan="10" class="small">Nenhuma despesa da obra.</td></tr>';
   return `<h3>Despesas da obra</h3>
-    <p class="small">Custos diretos da obra, como ART e lista de materiais. Digite o <b>%</b> (calcula o valor sobre o líquido da obra, ${fmt(base)}) ou digite o <b>valor</b> para acertar o número exato — o % passa a acompanhar. Entram no custo total e no lucro da obra. Informe o <b>vencimento</b> para a despesa aparecer em <b>Contas a pagar</b> no mês certo; o pagamento (total ou parcial) é feito lá.</p>
-    <table><tr><th>Despesa</th><th>Fornecedor</th><th>Colaborador</th><th class="num">%</th><th class="num">Valor</th><th></th><th>Vencimento</th><th class="num">Pago</th><th></th></tr>${rows}
-      <tr class="hdr"><td colspan="3">Total das despesas da obra</td><td class="num">${pct(base?despesasObraTotal(obra)/base*100:0)}</td><td class="num">${fmt(despesasObraTotal(obra))}</td><td colspan="4"></td></tr></table>
+    <p class="small">Custos diretos da obra, como ART e lista de materiais (disciplina "Geral"). O estudo de proteção fica vinculado à disciplina Subestação — se escolher uma disciplina, o % passa a ser sobre o líquido dela. Se informar o <b>colaborador</b> (ex.: o Renner fez a lista de materiais), a despesa aparece nos serviços a receber dele. Digite o <b>%</b> (calcula o valor sobre o líquido da obra, ${fmt(base)}) ou digite o <b>valor</b> para acertar o número exato — o % passa a acompanhar. Entram no custo total e no lucro da obra. Informe o <b>vencimento</b> para a despesa aparecer em <b>Contas a pagar</b> no mês certo; o pagamento (total ou parcial) é feito lá.</p>
+    <table><tr><th>Despesa</th><th>Fornecedor</th><th>Disciplina</th><th>Colaborador</th><th class="num">%</th><th class="num">Valor</th><th></th><th>Vencimento</th><th class="num">Pago</th><th></th></tr>${rows}
+      <tr class="hdr"><td colspan="4">Total das despesas da obra</td><td class="num">${pct(base?despesasObraTotal(obra)/base*100:0)}</td><td class="num">${fmt(despesasObraTotal(obra))}</td><td colspan="4"></td></tr></table>
     <datalist id="listaForn">${fornecedoresConhecidos().map(x=>`<option value="${esc(x)}">`).join('')}</datalist>
     <div class="row-flex" style="margin-top:6px;"><button class="btn secondary dobraAdd" data-o="${esc(obra.id)}" data-n="ART" data-f="CREA">+ ART (CREA)</button> <button class="btn secondary dobraAdd" data-o="${esc(obra.id)}" data-n="Lista de materiais">+ Lista de materiais</button> <button class="btn secondary dobraAdd" data-o="${esc(obra.id)}" data-n="Estudo de proteção">+ Estudo de proteção</button> <button class="btn secondary dobraAdd" data-o="${esc(obra.id)}" data-n="">+ outra despesa</button></div>`;
 }
@@ -3095,12 +3100,15 @@ function attachMain(){
     const dobra=el=>{ const o=DATA.obras.find(x=>x.id===el.dataset.o); const d=o&&(o.despesasObra||[]).find(x=>x.id===el.dataset.d); return d?{o,d}:null; };
     document.querySelectorAll('.dobraNome').forEach(i=>i.onchange=e=>{ const t=dobra(i); if(!t) return; t.d.nome=e.target.value.trim()||'Despesa'; save(DATA); render(); });
     document.querySelectorAll('.dobraForn').forEach(i=>i.onchange=e=>{ const t=dobra(i); if(!t) return; t.d.fornecedor=e.target.value.trim(); save(DATA); render(); });
+    document.querySelectorAll('.dobraServ').forEach(i=>i.onchange=e=>{ const t=dobra(i); if(!t) return; if(e.target.value) t.d.servicoId=e.target.value; else delete t.d.servicoId; save(DATA); render(); });
     document.querySelectorAll('.dobraColab').forEach(i=>i.onchange=e=>{ const t=dobra(i); if(!t) return; t.d.colaboradorId=e.target.value; save(DATA); render(); });
     document.querySelectorAll('.dobraPct').forEach(i=>i.onchange=e=>{ const t=dobra(i); if(!t) return; t.d.pct=parseBRL(e.target.value); t.d.modo='pct'; delete t.d.valor; save(DATA); render(); });
     document.querySelectorAll('.dobraVal').forEach(i=>i.onchange=e=>{ const t=dobra(i); if(!t) return; t.d.valor=parseBRL(e.target.value); t.d.modo='valor'; save(DATA); render(); });
     document.querySelectorAll('.dobraVenc').forEach(i=>i.onchange=e=>{ const t=dobra(i); if(!t) return; const iso=brToIso(e.target.value); if(iso===null){ i.style.borderColor='var(--bad)'; return; } if(iso) t.d.vencimento=iso; else delete t.d.vencimento; save(DATA); render(); });
     document.querySelectorAll('.dobraDel').forEach(b=>b.onclick=()=>{ const t=dobra(b); if(!t) return; t.o.despesasObra=t.o.despesasObra.filter(x=>x.id!==t.d.id); save(DATA); render(); });
-    document.querySelectorAll('.dobraAdd').forEach(b=>b.onclick=()=>{ const o=DATA.obras.find(x=>x.id===b.dataset.o); if(!o) return; o.despesasObra=o.despesasObra||[]; o.despesasObra.push({id:novoId('do'),nome:b.dataset.n||'Nova despesa',fornecedor:b.dataset.f||'',colaboradorId:'',pct:0,modo:'pct'}); save(DATA); render(); });
+    document.querySelectorAll('.dobraAdd').forEach(b=>b.onclick=()=>{ const o=DATA.obras.find(x=>x.id===b.dataset.o); if(!o) return; o.despesasObra=o.despesasObra||[]; const nd={id:novoId('do'),nome:b.dataset.n||'Nova despesa',fornecedor:b.dataset.f||'',colaboradorId:'',pct:0,modo:'pct'};
+      if(semAcento(nd.nome).includes('estudo de protec')){ const sub=servicoSubestacao(o); if(sub) nd.servicoId=sub.id; else alert('Esta obra não tem a disciplina Subestação. A despesa foi criada como Geral; adicione a disciplina e escolha-a na coluna "Disciplina".'); }
+      o.despesasObra.push(nd); save(DATA); render(); });
     document.querySelectorAll('.addaditivo').forEach(b=>b.onclick=()=>{
       const obra=DATA.obras.find(o=>o.id===b.dataset.o); const sv=obra&&obra.servicos.find(x=>x.id===b.dataset.s); if(!sv) return;
       const q=c=>document.querySelector('.'+c+'[data-s="'+sv.id+'"]');
