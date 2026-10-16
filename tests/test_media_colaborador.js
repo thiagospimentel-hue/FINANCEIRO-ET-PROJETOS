@@ -36,5 +36,12 @@ const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwrig
   T('voltar por entrega nas marcadas', await p.evaluate(()=>DATA.obras.map(o=>o.equipe[0].modelo||'').join('|'))==='||');
   await p.evaluate(()=>{ aprovarEntrega(DATA.obras[1],DATA.obras[1].equipe[0],DATA.obras[1].equipe[0].etapas[0]); render(); });
   T('obra com aprovação fica desabilitada', await p.locator('.mcOb[data-o="o2"]').isDisabled());
+  // modo por entrega
+  await p.evaluate(()=>{ MEDIA_COLAB={}; render(); });
+  await p.check('.mcModo[value="entrega"]'); await p.waitForTimeout(150);
+  T('modo por entrega esconde período e mostra botão próprio', await p.locator('.mcCfg').count()===0 && await p.locator('.mcAplicar[data-m="entrega"]').count()===1);
+  await p.evaluate(()=>{ aplicarModeloPagamento('u1','media',{inicio:'2026-11',meses:3,ret:0,dia:5},['o3']); delete DATA.obras[2].equipe[0].media.travado; render(); });
+  await p.check('.mcOb[data-o="o3"]'); await p.waitForTimeout(100); await p.click('.mcAplicar[data-m="entrega"]'); await p.waitForTimeout(200);
+  T('aplicar por entrega volta a obra marcada ao padrão de entrega', await p.evaluate(()=>(DATA.obras[2].equipe[0].modelo||'')===''&&DATA.obras[2].equipe[0].etapas.every(e=>!e.mensal)));
   T('sem erros', errs.length===0, errs); console.log(ok+' ok, '+ko+' falhas'); await b.close(); process.exit(ko?1:0);
 })();

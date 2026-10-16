@@ -1593,12 +1593,16 @@ function mediaColabHtml(u){
   const gHtml=Object.keys(gr).map(k=>{ const g=gr[k], md=g.md, fim=md.fim||mesDeslocar(md.inicio,(+md.meses||1)-1), nn=+md.meses||1;
     return `<div class="servbox" style="margin:6px 0;"><div class="row-flex" style="justify-content:space-between;flex-wrap:wrap;gap:6px;"><div><b>${g.trav?'🔒 ':''}${esc(g.nome||'Grupo de obras')}</b>${g.trav?' <span class="small">(travado)</span>':''} <span class="small">${esc(md.inicio)} → ${esc(fim)} (${nn} meses · retenção ${esc(md.ret)}%)</span><div class="small">${g.obras.map(x=>esc(x.nome)).join(' · ')}</div><div class="small">Total <b>${fmt(g.tot)}</b> · parcela mensal <b>${fmt(g.tot*(100-(+md.ret||0))/100/nn)}</b> · retido <b>${fmt(g.tot*(+md.ret||0)/100)}</b></div></div>
       <div class="row-flex" style="gap:6px;"><button class="btn secondary mcTrava" data-u="${cc}" data-t="${g.trav?'0':'1'}" data-o="${esc(g.obras.map(x=>x.id).join(','))}">${g.trav?'Destravar':'Travar grupo'}</button>${g.trav?'':`<button class="btn secondary mcDesfazer" data-u="${cc}" data-o="${esc(g.obras.map(x=>x.id).join(','))}" title="Volta estas obras para pagamento por entrega">Voltar para "por entrega"</button>`}</div></div></div>`; }).join('');
-  return `<div class="servbox" style="background:var(--accent-bg);margin-top:10px;"><b>Pagamento por média — grupo de obras</b>
-    <p class="small" style="margin:2px 0 6px;">Marque as obras do grupo e defina o período (início e finalização): o valor dele(a) nessas obras é dividido em parcelas mensais dentro do período, e a retenção fica guardada até cada obra ser concluída.</p>
+  return `<div class="servbox" style="background:var(--accent-bg);margin-top:10px;"><b>Forma de pagamento nas obras</b>
+    <div class="row-flex" style="gap:18px;flex-wrap:wrap;margin:6px 0;">
+      <label><input type="radio" name="mcModo${cc}" class="mcModo" data-u="${cc}" value="entrega" ${st.modo==='entrega'?'checked':''}> <b>Por entrega</b> <span class="small">— ele conclui cada etapa e você aprova</span></label>
+      <label><input type="radio" name="mcModo${cc}" class="mcModo" data-u="${cc}" value="media" ${st.modo!=='entrega'?'checked':''}> <b>Por média no período</b> <span class="small">— grupo de obras com parcelas mensais</span></label>
+    </div>
+    <p class="small" style="margin:2px 0 6px;">${st.modo==='entrega'?'Marque as obras que passam a ser pagas por entrega (etapas padrão: o colaborador marca como concluída e você aprova). Obras já em média só mudam depois de destravar o grupo.':'Marque as obras do grupo e defina o período (início e finalização): o valor dele(a) nessas obras é dividido em parcelas mensais dentro do período, e a retenção fica guardada até cada obra ser concluída.'}</p>
     ${gHtml?`<div style="margin-bottom:8px;"><span class="small">Grupos aplicados</span>${gHtml}</div>`:''}
     ${confMensalHtml(u)}
     <table><tr><th>Obra</th><th class="num">Valor dele(a)</th><th>Forma atual</th></tr>${linhas}</table>
-    <div class="row-flex" style="flex-wrap:wrap;gap:8px;margin-top:8px;align-items:center;">
+    ${st.modo==='entrega'?'':`<div class="row-flex" style="flex-wrap:wrap;gap:8px;margin-top:8px;align-items:center;">
       <label class="small">nome do grupo <input type="text" class="mcCfg" data-u="${cc}" data-f="grupo" value="${esc(c.grupo||'')}" placeholder="ex.: Grupo 2º semestre" style="width:170px;"></label>
       <label class="small">início <input type="month" class="mcCfg" data-u="${cc}" data-f="inicio" value="${esc(c.inicio)}"></label>
       <label class="small">finalização <input type="month" class="mcCfg" data-u="${cc}" data-f="fim" value="${esc(c.fim)}"></label>
@@ -1606,8 +1610,8 @@ function mediaColabHtml(u){
       <label class="small">retenção % <input type="number" min="0" max="50" class="pct-input mcCfg" data-u="${cc}" data-f="ret" value="${esc(c.ret)}"></label>
       <label class="small">dia do pagamento <input type="number" min="1" max="28" class="pct-input mcCfg" data-u="${cc}" data-f="dia" value="${esc(c.dia)}"></label>
     </div>
-    ${resumo}
-    <div class="row-flex" style="gap:8px;"><button class="btn mcAplicar" data-u="${cc}" data-m="media" ${tot>0?'':'disabled'}>Aplicar média ao grupo</button><button class="btn secondary mcAplicar" data-u="${cc}" data-m="entrega" ${st.obras.length?'':'disabled'}>Voltar para "por entrega"</button></div></div>`;
+    ${resumo}`}
+    <div class="row-flex" style="gap:8px;margin-top:8px;">${st.modo==='entrega'?`<button class="btn mcAplicar" data-u="${cc}" data-m="entrega" ${st.obras.length?'':'disabled'}>Aplicar "por entrega" às obras marcadas</button>`:`<button class="btn mcAplicar" data-u="${cc}" data-m="media" ${tot>0?'':'disabled'}>Aplicar média ao grupo</button>`}</div></div>`;
 }
 // Percentual padrão do colaborador (fixado no cadastro): '' = % sobre o líquido total (Geral); demais chaves = tipoId da disciplina
 function padraoColab(u){ const c=DATA.colaboradores.find(x=>x.id===u); const p=c&&c.padrao; return p&&Object.keys(p).some(k=>+p[k]>0)?p:null; }
@@ -3776,12 +3780,14 @@ function attachMain(){
     document.querySelectorAll('.pmDesf').forEach(b=>b.onclick=()=>{ if(desfazerPagoMes(b.dataset.u,b.dataset.m)) save(DATA); setTimeout(render,0); });
     document.querySelectorAll('.mcTrava').forEach(b=>b.onclick=()=>{ const t=b.dataset.t==='1'; if(!t&&!confirm('Destravar o grupo? Ele poderá ser alterado ou desfeito.')) return; const ids=b.dataset.o.split(','); let n=0; DATA.obras.forEach(o=>{ if(!ids.includes(o.id)) return; (o.equipe||[]).forEach(m=>{ if(m.colaboradorId===b.dataset.u&&m.media){ if(t) m.media.travado=true; else delete m.media.travado; n++; } }); }); logAcao((t?'Grupo de média travado: ':'Grupo de média destravado: ')+colabNome(b.dataset.u)+' ('+n+' vínculo(s))'); save(DATA); setTimeout(render,0); });
     document.querySelectorAll('.mcDesfazer').forEach(b=>b.onclick=()=>{ if(!confirm('Voltar essas obras para "por entrega"? (o grupo é desfeito e destravado; vínculos com pagamento já registrado não são alterados — desfaça o pagamento antes)')) return; const r=aplicarModeloPagamento(b.dataset.u,'entrega',{},b.dataset.o.split(',')); logAcao('Grupo de média desfeito: '+colabNome(b.dataset.u)+' ('+r.ok+' vínculo(s))'); if(r.bloq) alert(r.bloq+' vínculo(s) já têm pagamento registrado e não foram alterados. Para voltar a "por entrega", desfaça antes o pagamento do mês (conferência mensal).'); save(DATA); setTimeout(render,0); });
+    document.querySelectorAll('.mcModo').forEach(i=>i.onchange=e=>{ const st=mediaColabEstado(i.dataset.u); st.modo=e.target.value; setTimeout(render,0); });
     document.querySelectorAll('.mcAplicar').forEach(b=>b.onclick=()=>{
       const st=mediaColabEstado(b.dataset.u); if(!st.obras.length) return;
       const cfg={...st.cfg,meses:mesesPeriodo(st.cfg.inicio,st.cfg.fim)}; if(b.dataset.m==='media'){ cfg.grupoId=novoId('gr'); cfg.grupo=(st.cfg.grupo||'').trim()||('Grupo '+cfg.inicio+' a '+cfg.fim); }
       const r=aplicarModeloPagamento(b.dataset.u,b.dataset.m,cfg,st.obras.slice());
       logAcao('Forma de pagamento ('+(b.dataset.m==='media'?'média mensal, grupo '+cfg.grupo+', '+cfg.inicio+' a '+cfg.fim:'por entrega')+') aplicada a '+colabNome(b.dataset.u)+' em '+r.ok+' vínculo(s)');
-      if(r.bloq) alert(r.bloq+' vínculo(s) já têm aprovação ou pagamento e não foram alterados.');
+      if(b.dataset.m==='entrega') alert(r.ok?('Pagamento por entrega ativado em '+r.ok+' vínculo(s).'):'Nada foi alterado.'+(r.bloq?'':' (as obras marcadas já estavam por entrega)'));
+      if(r.bloq) alert(r.bloq+' vínculo(s) não foram alterados: grupo travado (destrave antes) ou pagamento já registrado.');
       save(DATA); setTimeout(render,0);
     });
     document.querySelectorAll('.abrirColab').forEach(b=>b.onclick=e=>{ e.stopPropagation(); if(!b.dataset.u) return; SEL_COLAB=b.dataset.u; OPEN_COLAB=null; render(); window.scrollTo(0,0); });
