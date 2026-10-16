@@ -903,6 +903,7 @@ let FILTER_STATUS='';
 let FILTER_FAT_MES='';
 let FILTER_FAT_STATUS='';
 let FILTER_DASH_BUSCA='', FILTER_DASH_STATUS='', FILTER_DASH_EMP='';
+let DASH_VAL='bruto';
 let FILTER_CONTAS='';
 let FILTER_CONTAS_MES=new Date().toISOString().slice(0,7); // '' = todos os meses
 let FILTER_EMPRESA='';
@@ -1768,6 +1769,23 @@ function dashFiltroBar(total,achadas){
     ${dashFiltroAtivo()?`<p class="small" style="margin:8px 0 0;">Mostrando <b>${achadas}</b> de ${total} obra(s). Os blocos de caixa e equipe continuam mostrando a empresa toda; "Visão geral", "Ranking" e "Faturamento por etapa" seguem o filtro.</p>`:''}
   </div>`;
 }
+function totaisSimples(obras){
+  let tot=0,fat=0;
+  obras.forEach(o=>{ if((o.status||'andamento')==='cancelada') return; (o.etapasPagamento||[]).forEach(e=>{ const v=valorEtapaContrato(o,e); tot+=v; if(e.nfNumero||e.nfData) fat+=v; }); });
+  const f=DASH_VAL==='liquido'?liqFonte:(x=>x);
+  return {tot:f(tot),fat:f(fat),aFat:f(tot)-f(fat),n:obras.filter(o=>(o.status||'andamento')!=='cancelada').length};
+}
+function totaisSimplesCard(obras){
+  const t=totaisSimples(obras);
+  return `<div class="card"><div class="row-flex" style="justify-content:space-between;flex-wrap:wrap;gap:8px;align-items:center;"><h2 style="margin:0;">Obras fechadas — total, faturado e a faturar</h2>
+    <select id="dashVal" title="Valor bruto ou líquido (após ${String(RET_FONTE).replace('.',',')}% retido na fonte)"><option value="bruto" ${DASH_VAL==='bruto'?'selected':''}>Valor bruto</option><option value="liquido" ${DASH_VAL==='liquido'?'selected':''}>Valor líquido (−${String(RET_FONTE).replace('.',',')}%)</option></select></div>
+    <div class="grid3" style="margin-top:10px;">
+      <div><span class="small">Total das obras (${t.n})</span><br><b style="font-size:1.25em;">${fmt(t.tot)}</b></div>
+      <div><span class="small">Já faturado (NF emitida)</span><br><b class="pos" style="font-size:1.25em;">${fmt(t.fat)}</b></div>
+      <div><span class="small">A faturar (sem NF)</span><br><b style="font-size:1.25em;">${fmt(t.aFat)}</b></div>
+    </div>
+    <p class="small" style="margin:8px 0 0;">Segue os filtros acima (busca, status e empresa); obras canceladas ficam de fora.</p></div>`;
+}
 function dashboardView(){
   const obrasTodas=obrasVisiveis();
   const obras=obrasDash();
@@ -1805,6 +1823,7 @@ function dashboardView(){
   return `
   ${pendCard}
   ${dashFiltroBar(obrasTodas.length,obras.length)}
+  ${totaisSimplesCard(obras)}
   <div class="card">
     <h2>Caixa e cobranças — hoje</h2>
     <div class="grid3">
@@ -3340,6 +3359,7 @@ function attachMain(){
     const dB=document.getElementById('dashBusca');
     if(dB) dB.oninput=e=>{ FILTER_DASH_BUSCA=e.target.value; render(); const n=document.getElementById('dashBusca'); if(n){ n.focus(); try{ n.setSelectionRange(n.value.length,n.value.length); }catch(_){} } };
     document.querySelectorAll('.dashChip').forEach(b=>b.onclick=()=>{ FILTER_DASH_BUSCA = semAcento(FILTER_DASH_BUSCA.trim())===semAcento(b.dataset.n) ? '' : b.dataset.n; render(); });
+    const dV=document.getElementById('dashVal'); if(dV) dV.onchange=e=>{DASH_VAL=e.target.value;render();};
     const dS=document.getElementById('dashStatus'); if(dS) dS.onchange=e=>{FILTER_DASH_STATUS=e.target.value;render();};
     const dE=document.getElementById('dashEmp'); if(dE) dE.onchange=e=>{FILTER_DASH_EMP=e.target.value;render();};
     const dL=document.getElementById('dashLimpar'); if(dL) dL.onclick=()=>{FILTER_DASH_BUSCA='';FILTER_DASH_STATUS='';FILTER_DASH_EMP='';FILTER_FAT_MES='';FILTER_FAT_STATUS='';render();};
