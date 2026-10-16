@@ -5,7 +5,7 @@
       "headers": [
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'none'; script-src 'sha256-Xw2sVvvmRw+XNpoj76Pto2UTvEJy8drNPvTDA0ZhCzw='; style-src 'unsafe-inline'; img-src 'self' data: blob:; font-src data:; connect-src https://zfdknnllggkziwtavsnz.supabase.co; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'"
+          "value": "default-src 'none'; script-src 'sha256-AjKPFh1JxUg5S//gNEt5/+x0FfB0OegGYbRrxzQs87k='; style-src 'unsafe-inline'; img-src 'self' data: blob:; font-src data:; connect-src https://zfdknnllggkziwtavsnz.supabase.co; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'"
         },
         {
           "key": "X-Content-Type-Options",

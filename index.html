@@ -522,6 +522,152 @@ async function sbBoot(){
   }catch(e){ await sbSair(true); render(); }
 }
 
+// ===== Contratos / documentos da obra (somente administrador, modo Supabase) =====
+const DOC_TIPOS=['Contrato','Proposta','Aditivo','Outro'];
+function docNomeSeguro(n){ return String(n||'arquivo').normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^A-Za-z0-9_.-]+/g,'_').slice(-80)||'arquivo'; }
+function docPodeUsar(){ return SB.on && SESSION.role==='admin' && SB.tok; }
+async function docEnviar(obraId,file){
+  if(!file) throw new Error('Nenhum arquivo escolhido.');
+  if(file.size>30*1024*1024) throw new Error('O arquivo passa de 30 MB.');
+  const path='obras/'+safeId(obraId)+'/'+Date.now()+'-'+docNomeSeguro(file.name);
+  const r=await sbReq('/storage/v1/object/contratos/'+path,{method:'POST',body:file,headers:{'Content-Type':file.type||'application/octet-stream','x-upsert':'false'}});
+  if(!r.ok) throw await sbErro(r);
+  return path;
+}
+async function docLink(path){
+  const r=await sbReq('/storage/v1/object/sign/contratos/'+path,{method:'POST',body:JSON.stringify({expiresIn:300})});
+  if(!r.ok) throw await sbErro(r);
+  const j=await r.json(); return SB_URL+'/storage/v1'+j.signedURL;
+}
+async function docApagarArquivo(path){ try{ await sbReq('/storage/v1/object/contratos/'+path,{method:'DELETE'}); }catch(e){} }
+async function docLerContrato(path){
+  const r=await sbReq('/functions/v1/ler-contrato',{method:'POST',body:JSON.stringify({path})});
+  const j=await r.json().catch(()=>({})); if(!r.ok||!j.ok) throw new Error(j.erro||('Erro '+r.status)); return j.dados;
+}
+function docsBox(obra){
+  if(!docPodeUsar()) return '';
+  const lista=obra.documentos||[];
+  const linhas=lista.map(d=>`<tr><td>${esc(d.tipo||'Documento')}</td><td>${esc(d.nome)}</td><td class="small">${esc(d.data||'')}</td><td style="text-align:right;white-space:nowrap;"><button class="btn secondary docver" data-o="${esc(obra.id)}" data-d="${esc(d.id)}">Abrir</button> <button class="btn danger docdel" data-o="${esc(obra.id)}" data-d="${esc(d.id)}">Remover</button></td></tr>`).join('');
+  return `<h3>Documentos (contrato, proposta, aditivos)</h3>
+    <p class="small">Arquivos guardados em local privado: só o administrador consegue abrir.</p>
+    ${lista.length?`<table class="resumoTable"><tr><th>Tipo</th><th>Arquivo</th><th>Enviado em</th><th></th></tr>${linhas}</table>`:'<p class="small">Nenhum documento anexado.</p>'}
+    <div class="row-flex" style="margin-top:8px;align-items:center;gap:8px;">
+      <select class="docTipo" data-o="${esc(obra.id)}">${DOC_TIPOS.map(t=>`<option>${t}</option>`).join('')}</select>
+      <input type="file" class="docArq" data-o="${esc(obra.id)}" accept="application/pdf,image/png,image/jpeg">
+      <span class="small docMsg" data-o="${esc(obra.id)}"></span>
+    </div>`;
+}
+function ciTipoSugerido(txt){
+  const t=String(txt||'').toLowerCase();
+  const mapa=[[/el[eé]tric/,'Elétrica'],[/spda|para-?raio/,'SPDA'],[/sdai|inc[eê]ndio|alarme/,'SDAI'],[/subesta/,'Subestação'],[/sistemas|dados|telecom|cftv/,'Sistemas']];
+  for(const [re,nome] of mapa){ if(re.test(t)){ const x=DATA.tiposServico.find(s=>s.nome===nome); if(x) return x.id; } }
+  return DATA.tiposServico[0]?.id||'';
+}
+function ciEmpresaPorCnpj(cnpj){
+  const d=String(cnpj||'').replace(/\D/g,''); if(!d) return '';
+  return (DATA.minhasEmpresas.find(e=>String(e.cnpj||'').replace(/\D/g,'')===d)||{}).id||'';
+}
+function ciPctDasParcelas(parcelas,total){
+  const t=total||parcelas.reduce((s,p)=>s+p.valor,0)||1;
+  const pcts=parcelas.map(p=>Math.round(p.valor/t*1e6)/1e4);
+  const dif=Math.round((100-pcts.reduce((a,b)=>a+b,0))*1e4)/1e4;
+  if(pcts.length && Math.abs(dif)<0.05) pcts[pcts.length-1]=Math.round((pcts[pcts.length-1]+dif)*1e4)/1e4;
+  return pcts;
+}
+function abrirImportarContrato(file){
+  if(document.getElementById('ciModal')) return;
+  const obraId='o'+Date.now();
+  const d=document.createElement('div'); d.id='ciModal';
+  d.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9000;display:flex;align-items:flex-start;justify-content:center;padding:16px;overflow:auto;';
+  const caixa=document.createElement('div');
+  caixa.style.cssText='background:#fff;color:#222;width:100%;max-width:820px;border-radius:10px;padding:22px;font:14px/1.45 system-ui,sans-serif;margin:auto;';
+  d.appendChild(caixa); document.body.appendChild(d);
+  const fechar=()=>d.remove();
+  caixa.innerHTML='<h3 style="margin:0 0 8px;">Lendo o contrato…</h3><p class="small" id="ciSt">Enviando o arquivo.</p><button class="btn secondary" id="ciCancel">Cancelar</button>';
+  let cancelado=false, caminho=null;
+  caixa.querySelector('#ciCancel').onclick=()=>{ cancelado=true; if(caminho) docApagarArquivo(caminho); fechar(); };
+  (async()=>{
+    try{
+      caminho=await docEnviar(obraId,file); if(cancelado) return;
+      const st=caixa.querySelector('#ciSt'); if(st) st.textContent='Arquivo guardado. A leitura leva de 20 a 60 segundos…';
+      const c=await docLerContrato(caminho); if(cancelado) return;
+      ciRevisao(caixa,c,{obraId,caminho,file,fechar});
+    }catch(err){
+      if(cancelado) return;
+      caixa.innerHTML='<h3 style="margin:0 0 8px;">Não foi possível ler o contrato</h3><p></p><div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn" id="ciManual">Criar a obra manualmente e anexar o PDF</button> <button class="btn secondary" id="ciFechar">Fechar</button></div>';
+      caixa.querySelector('p').textContent=err.message;
+      caixa.querySelector('#ciFechar').onclick=()=>{ if(caminho) docApagarArquivo(caminho); fechar(); };
+      caixa.querySelector('#ciManual').onclick=()=>{ ciRevisao(caixa,{parcelas:[],contratante:{},contratada:{},observacoes:[],camposIncertos:['Leitura automática indisponível: preencha os campos.']},{obraId,caminho,file,fechar}); };
+    }
+  })();
+}
+function ciRevisao(caixa,c,ctx){
+  const ct=c.contratante||{}, parc=(c.parcelas||[]).map(p=>({nome:p.nome||'',valor:Number(p.valor)||0}));
+  const cond=[c.prazoPagamentoNF&&('Pagamento da NF: '+c.prazoPagamentoNF),c.impostosRetidos&&('Impostos retidos: '+c.impostosRetidos),c.reajuste&&('Reajuste: '+c.reajuste),c.multas&&('Multas: '+c.multas)].filter(Boolean).join('\n');
+  const total=c.valorContrato||parc.reduce((s,p)=>s+p.valor,0);
+  const empId=ciEmpresaPorCnpj((c.contratada||{}).cnpj);
+  const campo=(id,lab,val,tipo,extra)=>`<div class="field" ${extra||''}><label>${lab}</label><input type="${tipo||'text'}" id="${id}" value="${esc(val==null?'':val)}"></div>`;
+  caixa.innerHTML=`<h3 style="margin:0 0 4px;">Conferir dados do contrato</h3>
+    <p class="small">Revise tudo antes de criar a obra. Nada foi criado ainda.</p>
+    ${(c.camposIncertos||[]).length?`<div class="card" style="border-color:#c47f00;"><b>Atenção — não constam ou ficaram incertos:</b><ul style="margin:6px 0 0 18px;">${(c.camposIncertos||[]).map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`:''}
+    ${(c.observacoes||[]).length?`<details style="margin:8px 0;"><summary><b>Observações do contrato (${c.observacoes.length})</b></summary><ul style="margin:6px 0 0 18px;">${c.observacoes.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></details>`:''}
+    <div class="grid2">
+      ${campo('ci_nome','Nome da obra',c.nomeObra)}
+      ${campo('ci_cod','Código do centro de custo',c.numeroContrato?('CT '+String(c.numeroContrato).replace(/^CT\s*/i,'')):'')}
+      ${campo('ci_cli','Contratante (razão social)',ct.razaoSocial)}
+      ${campo('ci_doc','CNPJ do contratante',ct.cnpj)}
+      ${campo('ci_cons','Construtora',c.construtora)}
+      ${campo('ci_spe','SPE',ct.razaoSocial)}
+      ${campo('ci_tel','Telefone',ct.telefone)}
+      ${campo('ci_mail','E-mail',ct.email)}
+      ${campo('ci_end','Endereço da obra',c.enderecoObra||ct.endereco,'text','style="grid-column:1/-1;"')}
+      <div class="field"><label>Empresa contratada (minha empresa)</label><select id="ci_emp">${empresaOptions(empId)}</select></div>
+      <div class="field"><label>Tipo de serviço</label><select id="ci_tipo">${DATA.tiposServico.map(t=>`<option value="${esc(t.id)}" ${t.id===ciTipoSugerido(c.objeto)?'selected':''}>${esc(t.nome)}</option>`).join('')}</select></div>
+      ${campo('ci_val','Valor total do contrato (R$)',total,'number')}
+      ${campo('ci_imp','Imposto (%)',17,'number')}
+      ${campo('ci_ini','Data de início',c.dataInicio,'date')}
+      ${campo('ci_fim','Previsão de término',c.dataTermino,'date')}
+    </div>
+    <div class="field" style="margin-top:8px;"><label>Condições de pagamento (texto)</label><textarea id="ci_cond" rows="4">${esc(cond)}</textarea></div>
+    <h4 style="margin:12px 0 4px;">Parcelas</h4><div id="ci_parc"></div>
+    <button class="btn secondary" id="ci_addp">+ parcela</button> <span class="small" id="ci_soma"></span>
+    <p class="small" id="ci_err" style="color:var(--bad,#b00020);min-height:18px;"></p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn" id="ci_criar">Criar obra</button> <button class="btn secondary" id="ci_cancel">Cancelar</button></div>`;
+  const $=id=>caixa.querySelector('#'+id);
+  const desenhar=()=>{
+    $('ci_parc').innerHTML=parc.map((p,i)=>`<div style="display:flex;gap:8px;margin-bottom:6px;"><input type="text" class="cp_n" data-i="${i}" value="${esc(p.nome)}" style="flex:2;"><input type="number" step="0.01" class="cp_v" data-i="${i}" value="${p.valor}" style="flex:1;"><button class="btn danger cp_x" data-i="${i}">×</button></div>`).join('')||'<p class="small">Sem parcelas — serão usadas as etapas padrão.</p>';
+    caixa.querySelectorAll('.cp_n').forEach(x=>x.oninput=e=>{parc[+x.dataset.i].nome=e.target.value;});
+    caixa.querySelectorAll('.cp_v').forEach(x=>x.oninput=e=>{parc[+x.dataset.i].valor=Number(e.target.value)||0;soma();});
+    caixa.querySelectorAll('.cp_x').forEach(x=>x.onclick=()=>{parc.splice(+x.dataset.i,1);desenhar();});
+    soma();
+  };
+  const soma=()=>{ const s=parc.reduce((a,p)=>a+p.valor,0), t=Number($('ci_val').value)||0; $('ci_soma').textContent=parc.length?('Soma das parcelas: '+fmt(s)+(Math.abs(s-t)>0.05?' — difere do valor do contrato ('+fmt(t)+')':' ✔')):''; };
+  $('ci_val').oninput=soma;
+  $('ci_addp').onclick=()=>{parc.push({nome:'',valor:0});desenhar();};
+  desenhar();
+  $('ci_cancel').onclick=()=>{ if(ctx.caminho) docApagarArquivo(ctx.caminho); ctx.fechar(); };
+  $('ci_criar').onclick=async()=>{
+    const err=m=>{$('ci_err').textContent=m;};
+    const nome=$('ci_nome').value.trim(), valor=Number($('ci_val').value)||0;
+    if(!nome) return err('Informe o nome da obra.');
+    if(!(valor>0)) return err('Informe o valor total do contrato.');
+    if(parc.some(p=>!p.nome.trim()||!(p.valor>0))) return err('Cada parcela precisa de nome e valor maior que zero.');
+    const soma_=parc.reduce((a,p)=>a+p.valor,0);
+    if(parc.length && Math.abs(soma_-valor)>0.05 && !confirm('A soma das parcelas ('+fmt(soma_)+') difere do valor do contrato ('+fmt(valor)+'). Criar mesmo assim?')) return;
+    $('ci_criar').disabled=true;
+    let etapas;
+    if(parc.length){ const pcts=ciPctDasParcelas(parc,soma_); etapas=parc.map((p,i)=>({id:'e'+Date.now()+(i+1),nome:p.nome.trim(),pct:pcts[i],pago:false,data:'',nfNumero:'',nfData:'',vencimento:''})); }
+    else etapas=etapasPadrao();
+    const obra={id:ctx.obraId,nomeObra:nome,codigo:$('ci_cod').value.trim()||('OBRA-'+String(DATA.obras.length+1).padStart(3,'0')),status:'andamento',dataInicio:$('ci_ini').value,dataPrevisao:$('ci_fim').value,empresaId:$('ci_emp').value,
+      cliente:{nome:$('ci_cli').value.trim(),documento:$('ci_doc').value.trim(),telefone:$('ci_tel').value.trim(),email:$('ci_mail').value.trim(),endereco:$('ci_end').value.trim(),construtora:$('ci_cons').value.trim(),spe:$('ci_spe').value.trim()},
+      condicoes:$('ci_cond').value,etapasPagamento:etapas,
+      despesasObra:[{id:novoId('do'),nome:'ART',fornecedor:'CREA',colaboradorId:'',pct:0,modo:'pct'},{id:novoId('do'),nome:'Lista de materiais',fornecedor:'',colaboradorId:'',pct:0,modo:'pct'}],
+      equipe:[],servicos:[{id:'s'+Date.now(),tipoId:$('ci_tipo').value,valorTotal:valor,imposto:Number($('ci_imp').value)||0,despesas:[],aditivos:[]}],reajustes:[],
+      documentos:ctx.caminho?[{id:novoId('dc'),tipo:'Contrato',nome:ctx.file.name,path:ctx.caminho,data:new Date().toISOString().slice(0,10)}]:[]};
+    DATA.obras.push(obra); OPEN_OBRA=obra.id; logAcao('Obra criada a partir do contrato: '+nome); save(DATA); ctx.fechar(); render();
+  };
+}
+
 function defaultData(){
   return {
     tiposServico:[{id:'t1',nome:'Elétrica'},{id:'t2',nome:'Sistemas'},{id:'t3',nome:'SPDA'},{id:'t4',nome:'SDAI'},{id:'t5',nome:'Subestação'},{id:'t6',nome:'Outros'}],
@@ -1650,11 +1796,12 @@ function obrasView(){
       <h3>Serviços da obra</h3>
       ${servRows}
       <button class="btn secondary addserv" data-o="${esc(obra.id)}">+ serviço nesta obra</button>
+      ${docsBox(obra)}
       ${despesasObraBox(obra)}
       `:''}
     </div>`;
   }).join('');
-  return filterBar() + cards+`<button class="btn" id="addobra">+ Nova obra</button>`;
+  return filterBar() + cards+`<button class="btn" id="addobra">+ Nova obra</button>`+(docPodeUsar()?` <label class="btn secondary" style="cursor:pointer;display:inline-block;">+ Nova obra a partir do contrato (PDF)<input type="file" id="importCt" accept="application/pdf" style="display:none;"></label>`:'');
 }
 
 function baixaWidget(kind,a,b,c,saldo,baixas,label){
@@ -2588,6 +2735,24 @@ function attachMain(){
       const id=b.dataset.o, o=DATA.obras.find(x=>x.id===id); if(!o||obraEmUso(id)) return;
       if(PENDING_DEL!==id){ PENDING_DEL=id; render(); return; }
       PENDING_DEL=''; DATA.obras=DATA.obras.filter(x=>x.id!==id); logAcao('Obra excluída: '+o.nomeObra); save(DATA); render();
+    });
+    const impCt=document.getElementById('importCt');
+    if(impCt) impCt.onchange=e=>{ const f=e.target.files[0]; e.target.value=''; if(f) abrirImportarContrato(f); };
+    document.querySelectorAll('.docArq').forEach(i=>i.onchange=async e=>{
+      const f=e.target.files[0]; if(!f) return; const id=i.dataset.o, obra=DATA.obras.find(o=>o.id===id); if(!obra) return;
+      const msg=document.querySelector('.docMsg[data-o="'+id+'"]'); if(msg) msg.textContent='Enviando…';
+      const tipo=(document.querySelector('.docTipo[data-o="'+id+'"]')||{}).value||'Outro';
+      try{ const path=await docEnviar(id,f); (obra.documentos=obra.documentos||[]).push({id:novoId('dc'),tipo,nome:f.name,path,data:new Date().toISOString().slice(0,10)}); logAcao('Documento anexado: '+f.name); save(DATA); render(); }
+      catch(err){ if(msg) msg.textContent=err.message; }
+    });
+    document.querySelectorAll('.docver').forEach(b=>b.onclick=async()=>{
+      const obra=DATA.obras.find(o=>o.id===b.dataset.o), dc=obra&&(obra.documentos||[]).find(x=>x.id===b.dataset.d); if(!dc) return;
+      const w=window.open('about:blank','_blank'); try{ const u=await docLink(dc.path); if(w) w.location.href=u; else location.href=u; }catch(err){ if(w) w.close(); alert(err.message); }
+    });
+    document.querySelectorAll('.docdel').forEach(b=>b.onclick=async()=>{
+      const obra=DATA.obras.find(o=>o.id===b.dataset.o), dc=obra&&(obra.documentos||[]).find(x=>x.id===b.dataset.d); if(!dc) return;
+      if(!confirm('Remover o documento "'+dc.nome+'"? O arquivo será apagado.')) return;
+      obra.documentos=obra.documentos.filter(x=>x.id!==dc.id); await docApagarArquivo(dc.path); logAcao('Documento removido: '+dc.nome); save(DATA); render();
     });
     const addobra=document.getElementById('addobra');
     if(addobra) addobra.onclick=()=>{
