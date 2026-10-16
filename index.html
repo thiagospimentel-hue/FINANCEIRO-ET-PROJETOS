@@ -722,6 +722,20 @@ const ETAPAS_COORD=ETAPAS_COORD_DEFS.map(e=>e.nome);
 function etapasCoordPadrao(){
   return ETAPAS_COORD_DEFS.map(e=>({nome:e.nome,pct:e.pct,concluido:false,data:''}));
 }
+// Equipe de Detalhamento: 90% na entrega + 10% na aprovação do Projeto Legal (sem dividir em outras etapas)
+const ETAPAS_DETALH_DEFS=[{nome:'Entrega',pct:90},{nome:'Aprovação do Projeto Legal',pct:10}];
+function ehDetalhamento(papel){ return /detalhament/.test(String(papel||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')); }
+function etapasDoPapel(papel){ return ehDetalhamento(papel)?ETAPAS_DETALH_DEFS.map(e=>({nome:e.nome,pct:e.pct,concluido:false,data:''})):etapasCoordPadrao(); }
+// ajusta as etapas de quem ainda não tem aprovação/pagamento e não está em média (idempotente)
+function ajustaEtapasPapel(m){
+  if(!m||m.modelo==='media'||m.inativo) return false;
+  if((m.etapas||[]).some(e=>(e.baixas||[]).length>0||e.aprovado)) return false;
+  const det=ehDetalhamento(m.papel), nomes=(m.etapas||[]).map(e=>e.nome).join('|');
+  const ehDet=nomes===ETAPAS_DETALH_DEFS.map(e=>e.nome).join('|'), ehPadrao=nomes===ETAPAS_COORD.join('|');
+  if(det&&!ehDet&&(ehPadrao||!(m.etapas||[]).length)){ m.etapas=etapasDoPapel(m.papel); return true; }
+  if(!det&&ehDet){ m.etapas=etapasCoordPadrao(); return true; }
+  return false;
+}
 function coordPctTotal(c){ return (c.etapas||[]).reduce((s,e)=>s+(e.pct||0),0); }
 function migrarEtapasSimples(etapas){
   return (etapas||[]).map(e=>{
@@ -886,6 +900,7 @@ function migrarBaixas(d){
         if(!Array.isArray(e.baixas)) e.baixas=[];
         if(e.concluido && e.aprovado && e.valorFixo===undefined) e.valorFixo=equipeMembroValor(o,m)*((e.pct||0)/100);
       });
+      ajustaEtapasPapel(m);
     });
   });
 }
@@ -1464,7 +1479,7 @@ function aplicarModeloPagamento(colabId,modo,cfg,obraId){
       if(membroTemMovimento(m)){ bloq++; return; }
       if(m.media&&m.media.travado&&!cfg.destravar){ bloq++; return; }
       if(modo==='media'){ m.modelo='media'; m.media={inicio:cfg.inicio,meses:+cfg.meses,ret:+cfg.ret,dia:+cfg.dia,travado:true}; if(cfg.fim) m.media.fim=cfg.fim; if(cfg.grupoId) m.media.grupoId=cfg.grupoId; if(cfg.grupo) m.media.grupo=cfg.grupo; m.etapas=mediaEtapas(cfg); }
-      else { delete m.modelo; delete m.media; m.etapas=etapasCoordPadrao(); }
+      else { delete m.modelo; delete m.media; m.etapas=etapasDoPapel(m.papel); }
       ok++;
     });
     sincRetencoes(o);
@@ -1639,7 +1654,7 @@ function equipeGridSet(obraId,colab,base,pct){
     else obra.equipe.splice(mi,1);
   } else if(pct>0){
     const outro=obra.equipe.find(m=>m.colaboradorId===colab);
-    const novo={id:novoId('eq'),colaboradorId:colab,papel:(outro&&outro.papel)||colabCargo(colab)||'',pct,baseIds:base?[base]:[],etapas:etapasCoordPadrao()};
+    const novo={id:novoId('eq'),colaboradorId:colab,papel:(outro&&outro.papel)||colabCargo(colab)||'',pct,baseIds:base?[base]:[],etapas:etapasCoordPadrao()}; novo.etapas=etapasDoPapel(novo.papel);
     let ref=null; DATA.obras.forEach(o=>(o.equipe||[]).forEach(m=>{ if(!ref&&m.colaboradorId===colab&&m.modelo==='media'&&m.media) ref=m.media; }));
     if(ref){ novo.modelo='media'; novo.media={...ref}; novo.etapas=mediaEtapas(ref); }
     obra.equipe.push(novo);
@@ -3398,12 +3413,13 @@ function attachMain(){
       m.colaboradorId=e.target.value;
       const cargo=colabCargo(e.target.value);
       if(cargo) m.papel=cargo;
+      ajustaEtapasPapel(m);
       save(DATA); render();
     });
     document.querySelectorAll('.equipepapel').forEach(i=>i.onchange=e=>{const obra=DATA.obras.find(o=>o.id===i.dataset.o);obra.equipe[i.dataset.i].papel=e.target.value;save(DATA);render();});
     document.querySelectorAll('.eqmodo').forEach(b=>b.onclick=()=>{EQUIPE_MODO=b.dataset.m;render();});
     document.querySelectorAll('.gcell').forEach(i=>i.onchange=e=>{ equipeGridSet(i.dataset.o,i.dataset.c,i.dataset.b,e.target.value); save(DATA); setTimeout(render,0); });
-    document.querySelectorAll('.gcargo').forEach(i=>i.onchange=e=>{ const o=DATA.obras.find(x=>x.id===i.dataset.o); (o.equipe||[]).forEach(m=>{ if(m.colaboradorId===i.dataset.c) m.papel=e.target.value; }); save(DATA); setTimeout(render,0); });
+    document.querySelectorAll('.gcargo').forEach(i=>i.onchange=e=>{ const o=DATA.obras.find(x=>x.id===i.dataset.o); (o.equipe||[]).forEach(m=>{ if(m.colaboradorId===i.dataset.c){ m.papel=e.target.value; ajustaEtapasPapel(m); } }); save(DATA); setTimeout(render,0); });
     document.querySelectorAll('.gallbtn').forEach(b=>b.onclick=()=>{
       const o=DATA.obras.find(x=>x.id===b.dataset.o); const v=b.parentElement.querySelector('.gall').value; if(v===''||!o) return;
       (o.servicos||[]).forEach(sv=>equipeGridSet(o.id,b.dataset.c,sv.id,v)); save(DATA); render();
