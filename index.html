@@ -903,7 +903,7 @@ let FILTER_STATUS='';
 let FILTER_FAT_MES='';
 let FILTER_FAT_STATUS='';
 let FILTER_DASH_BUSCA='', FILTER_DASH_STATUS='', FILTER_DASH_EMP='';
-let DASH_VAL='bruto';
+let DASH_VAL='bruto'; let FILTER_DASH_SEL=[];
 let FILTER_CONTAS='';
 let FILTER_CONTAS_MES=new Date().toISOString().slice(0,7); // '' = todos os meses
 let FILTER_EMPRESA='';
@@ -1742,12 +1742,13 @@ function fluxoProjetadoCard(ind){
     </table></div></div>`;
 }
 const semAcento=t=>String(t||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
-function dashFiltroAtivo(){ return !!(FILTER_DASH_BUSCA.trim()||FILTER_DASH_STATUS||FILTER_DASH_EMP); }
+function dashFiltroAtivo(){ return !!(FILTER_DASH_BUSCA.trim()||FILTER_DASH_STATUS||FILTER_DASH_EMP||FILTER_DASH_SEL.length); }
 function obrasDash(){
   const q=semAcento(FILTER_DASH_BUSCA.trim()).split(/\s+/).filter(Boolean);
   return obrasVisiveis().filter(o=>{
     if(FILTER_DASH_STATUS && (o.status||'andamento')!==FILTER_DASH_STATUS) return false;
     if(FILTER_DASH_EMP && o.empresaId!==FILTER_DASH_EMP) return false;
+    if(FILTER_DASH_SEL.length && !FILTER_DASH_SEL.includes(o.id)) return false;
     if(!q.length) return true;
     const c=o.cliente||{};
     const alvo=semAcento([o.nomeObra,o.codigo,c.nome,c.spe,c.construtora,c.documento].join(' '));
@@ -1765,7 +1766,8 @@ function dashFiltroBar(total,achadas){
       <select id="dashEmp"><option value="">Todas as empresas</option>${emp}</select>
       ${dashFiltroAtivo()?'<button class="btn secondary" id="dashLimpar">Limpar filtros</button>':''}
     </div>
-    <div class="row-flex" style="flex-wrap:wrap;gap:6px;margin-top:8px;">${obrasVisiveis().map(o=>`<button class="btn ${semAcento(FILTER_DASH_BUSCA.trim())===semAcento(o.nomeObra)?'':'secondary'} dashChip" data-n="${esc(o.nomeObra)}" title="${esc(o.codigo||'')}">${esc(o.nomeObra)}</button>`).join('')}</div>
+    <div class="row-flex" style="flex-wrap:wrap;gap:6px;margin-top:8px;">${obrasVisiveis().map(o=>`<button class="btn ${FILTER_DASH_SEL.includes(o.id)?'':'secondary'} dashChip" data-n="${esc(o.nomeObra)}" data-id="${esc(o.id)}" title="${esc(o.codigo||'')}">${FILTER_DASH_SEL.includes(o.id)?'✓ ':''}${esc(o.nomeObra)}</button>`).join('')}</div>
+    <p class="small" style="margin:6px 0 0;">Clique em uma ou mais obras para ver só elas e a soma delas.</p>
     ${dashFiltroAtivo()?`<p class="small" style="margin:8px 0 0;">Mostrando <b>${achadas}</b> de ${total} obra(s). Os blocos de caixa e equipe continuam mostrando a empresa toda; "Visão geral", "Ranking" e "Faturamento por etapa" seguem o filtro.</p>`:''}
   </div>`;
 }
@@ -1784,7 +1786,7 @@ function totaisSimplesCard(obras){
       <div><span class="small">Já faturado (NF emitida)</span><br><b class="pos" style="font-size:1.25em;">${fmt(t.fat)}</b></div>
       <div><span class="small">A faturar (sem NF)</span><br><b style="font-size:1.25em;">${fmt(t.aFat)}</b></div>
     </div>
-    <p class="small" style="margin:8px 0 0;">Segue os filtros acima (busca, status e empresa); obras canceladas ficam de fora.</p></div>`;
+    <p class="small" style="margin:8px 0 0;">Soma das obras que aparecem nos filtros acima (busca, status, empresa ou obras clicadas); canceladas ficam de fora.</p></div>`;
 }
 function dashboardView(){
   const obrasTodas=obrasVisiveis();
@@ -3358,11 +3360,11 @@ function attachMain(){
   if(TAB==='dashboard' && SESSION.role==='admin'){
     const dB=document.getElementById('dashBusca');
     if(dB) dB.oninput=e=>{ FILTER_DASH_BUSCA=e.target.value; render(); const n=document.getElementById('dashBusca'); if(n){ n.focus(); try{ n.setSelectionRange(n.value.length,n.value.length); }catch(_){} } };
-    document.querySelectorAll('.dashChip').forEach(b=>b.onclick=()=>{ FILTER_DASH_BUSCA = semAcento(FILTER_DASH_BUSCA.trim())===semAcento(b.dataset.n) ? '' : b.dataset.n; render(); });
+    document.querySelectorAll('.dashChip').forEach(b=>b.onclick=()=>{ FILTER_DASH_SEL = FILTER_DASH_SEL.includes(b.dataset.id) ? FILTER_DASH_SEL.filter(x=>x!==b.dataset.id) : FILTER_DASH_SEL.concat(b.dataset.id); render(); });
     const dV=document.getElementById('dashVal'); if(dV) dV.onchange=e=>{DASH_VAL=e.target.value;render();};
     const dS=document.getElementById('dashStatus'); if(dS) dS.onchange=e=>{FILTER_DASH_STATUS=e.target.value;render();};
     const dE=document.getElementById('dashEmp'); if(dE) dE.onchange=e=>{FILTER_DASH_EMP=e.target.value;render();};
-    const dL=document.getElementById('dashLimpar'); if(dL) dL.onclick=()=>{FILTER_DASH_BUSCA='';FILTER_DASH_STATUS='';FILTER_DASH_EMP='';FILTER_FAT_MES='';FILTER_FAT_STATUS='';render();};
+    const dL=document.getElementById('dashLimpar'); if(dL) dL.onclick=()=>{FILTER_DASH_BUSCA='';FILTER_DASH_STATUS='';FILTER_DASH_EMP='';FILTER_DASH_SEL=[];FILTER_FAT_MES='';FILTER_FAT_STATUS='';render();};
     const ga=document.querySelector('.goAprov'); if(ga) ga.onclick=()=>{TAB='aprovacoes';render();};
     const fMes=document.getElementById('filterFatMes'); if(fMes) fMes.onchange=e=>{FILTER_FAT_MES=e.target.value;render();};
     const fStatus=document.getElementById('filterFatStatus'); if(fStatus) fStatus.onchange=e=>{FILTER_FAT_STATUS=e.target.value;render();};
