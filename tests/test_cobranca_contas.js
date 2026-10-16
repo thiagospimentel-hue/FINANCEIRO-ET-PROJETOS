@@ -27,6 +27,10 @@ const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwrig
   T('recebimento grava a conta no caixa', mv&&mv.tipo==='entrada'&&mv.valor===50000&&!!mv.contaId, mv);
   await p.evaluate(()=>{ TAB='caixa'; render(); });
   T('card de movimento por conta mostra o saldo', (await p.content()).includes('Movimento por conta bancária') && /R\$\s*50\.000,00/.test(await p.locator('text=Movimento por conta bancária').locator('..').innerText()));
+  await p.evaluate(()=>{ DATA.caixa.push({id:'mx1',data:'2026-10-01',desc:'Antigo sem conta',tipo:'entrada',valor:1000,obraId:'',colaboradorId:''}); render(); });
+  T('lançamento sem conta aparece em "Sem conta informada"', /Sem conta informada/.test(await p.innerText('body')));
+  await p.selectOption('.movContaSel[data-id="mx1"]',{index:1}); await p.waitForTimeout(150);
+  const dbg=await p.evaluate(()=>({c:DATA.caixa.find(x=>x.id==='mx1').contaId, n:document.querySelectorAll('.movContaSel').length})); T('conta atribuída ao lançamento antigo e somada', !!dbg.c && !/Sem conta informada/.test(await p.innerText('body')), dbg);
   T('texto da empresa não injeta HTML', await p.evaluate(()=>!document.querySelector('#app b:not([class])')||true));
   T('sem erros', errs.length===0, errs); console.log(ok+' ok, '+ko+' falhas'); await b.close(); process.exit(ko?1:0);
 })();

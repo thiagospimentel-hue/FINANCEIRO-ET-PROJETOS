@@ -2542,21 +2542,24 @@ function contasCaixaCard(){
     linhas.push(`<tr><td>${esc(e.nome)}</td><td>${esc(contaRotulo(c))}</td><td class="num pos">${fmt(ent)}</td><td class="num neg">${fmt(sai)}</td><td class="num"><b>${fmt(ent-sai)}</b></td></tr>`);
   }));
   if(!linhas.length) return '';
-  const sem=DATA.caixa.filter(movVisivel).filter(m=>!m.contaId).length;
+  const semL=DATA.caixa.filter(movVisivel).filter(m=>!m.contaId||!acharConta(m.contaId));
+  const sem=semL.length;
+  if(sem){ let ent=0,sai=0; semL.forEach(m=>{ if(m.tipo==='entrada') ent+=m.valor; else sai+=m.valor; }); linhas.push(`<tr><td colspan="2"><i>Sem conta informada</i> (${sem} lançamento${sem>1?'s':''})</td><td class="num pos">${fmt(ent)}</td><td class="num neg">${fmt(sai)}</td><td class="num"><b>${fmt(ent-sai)}</b></td></tr>`); }
   return `<div class="card"><h2>Movimento por conta bancária</h2><table><tr><th>Empresa</th><th>Conta</th><th class="num">Entradas</th><th class="num">Saídas</th><th class="num">Saldo movimentado</th></tr>${linhas.join('')}</table>
-    <p class="small">Soma só os lançamentos com conta informada (${sem} lançamento(s) sem conta não entram). O recebimento de uma cobrança já usa a conta escolhida em "Resumo p/ Cobrança".</p></div>`;
+    <p class="small">${sem?`Há ${sem} lançamento(s) sem conta: escolha a conta na coluna "Conta" da lista abaixo para que entrem na soma da conta. `:''}Os recebimentos novos já usam a conta escolhida em "Resumo p/ Cobrança".</p></div>`;
 }
 function caixaView(){
   let lista=DATA.caixa.filter(movVisivel);
   if(FILTER_CAIXA_OBRA) lista=lista.filter(m=>m.obraId===FILTER_CAIXA_OBRA);
   if(FILTER_CAIXA_COLAB) lista=lista.filter(m=>m.colaboradorId===FILTER_CAIXA_COLAB);
+  const contasOpts=(DATA.minhasEmpresas||[]).flatMap(e=>(e.contas||[]).map(c=>`<option value="${esc(c.id)}">${esc(e.nome)} — ${esc(contaRotulo(c))}</option>`)).join('');
   const rows=lista.slice().sort((a,b)=>a.data<b.data?1:-1).map(m=>{
     const obraNome = DATA.obras.find(o=>o.id===m.obraId)?.nomeObra || '—';
     const colNome = m.colaboradorId ? colabNome(m.colaboradorId) : '—';
     return `<tr>
       <td>${new Date(m.data+'T00:00').toLocaleDateString('pt-BR')}</td><td>${esc(m.desc)}</td>
       <td class="small">${esc(obraNome)}</td><td class="small">${esc(colNome)}</td>
-      <td class="small">${m.contaId&&acharConta(m.contaId)?esc(contaRotulo(acharConta(m.contaId).conta)):'—'}</td>
+      <td class="small">${contasOpts?`<select class="movContaSel" data-id="${esc(m.id)}" style="max-width:170px;"><option value="">— sem conta —</option>${contasOpts.replace('value="'+esc(m.contaId||'#')+'"','value="'+esc(m.contaId||'#')+'" selected')}</select>`:'—'}</td>
       <td class="num ${m.tipo==='entrada'?'pos':'neg'}">${m.tipo==='entrada'?'+':'-'} ${fmt(m.valor)}</td>
       <td>${m.origem?'<span title="Lançamento gerado por uma baixa. Para desfazer, use a tela de origem (Resumo p/ Cobrança, Colaboradores ou Contas a pagar).">🔗</span>':`<button class="btn danger delmov" data-id="${esc(m.id)}">x</button>`}</td></tr>`;
   }).join('');
@@ -3451,6 +3454,7 @@ function attachMain(){
       bx.movId=mv.id; delete bx.semCaixa; mv.origem=x.origem; if(x.colaboradorId&&!mv.colaboradorId) mv.colaboradorId=x.colaboradorId;
       logAcao('Baixa antiga vinculada ao caixa: '+x.label+' ('+fmt(bx.valor)+')'); save(DATA); render();
     });
+    document.querySelectorAll('.movContaSel').forEach(i=>i.onchange=e=>{ const m=DATA.caixa.find(x=>x.id===i.dataset.id); if(!m) return; if(e.target.value) m.contaId=e.target.value; else delete m.contaId; save(DATA); setTimeout(render,0); });
     document.querySelectorAll('.delmov').forEach(b=>b.onclick=()=>{const mv=DATA.caixa.find(m=>m.id===b.dataset.id); if(!mv||mv.origem) return; DATA.caixa=DATA.caixa.filter(m=>m.id!==b.dataset.id); logAcao('Lançamento manual excluído: '+mv.desc+' ('+fmt(mv.valor)+')'); save(DATA);render();});
     const fObra=document.getElementById('filterCaixaObra'); if(fObra) fObra.onchange=e=>{FILTER_CAIXA_OBRA=e.target.value;render();};
     const fColab=document.getElementById('filterCaixaColab'); if(fColab) fColab.onchange=e=>{FILTER_CAIXA_COLAB=e.target.value;render();};
