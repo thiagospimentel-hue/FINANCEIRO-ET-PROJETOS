@@ -19,6 +19,11 @@ const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwrig
   T('grupo gravado com nome e fim', await p.evaluate(()=>{const md=DATA.obras[0].equipe[0].media; return md.grupo==='Grupo teste'&&md.fim==='2027-02'&&md.grupoId===DATA.obras[2].equipe[0].media.grupoId&&!!md.grupoId;}));
   T('painel lista o grupo aplicado com as 2 obras', (await p.locator('.servbox:has-text("Grupos aplicados")').count())>0 && /Grupo teste/.test(await p.innerText('.servbox:has-text("Grupos aplicados")')) && /A · C/.test(await p.innerText(".servbox:has-text(\"Grupos aplicados\")")));
   T('só as obras marcadas ficam em média (4 parcelas + retenção)', r[0].md==='media'&&r[0].n===5&&r[0].m===4&&r[0].ini==='2026-11'&&r[2].md==='media'&&r[1].md==='', r);
+  T('grupo nasce travado (sem botão Desfazer, checkbox da obra bloqueado)', await p.locator('.mcDesfazer').count()===0 && await p.locator('.mcOb[disabled]').count()===2 && await p.evaluate(()=>DATA.obras[0].equipe[0].media.travado===true));
+  await p.evaluate(()=>{ aplicarModeloPagamento('u1','entrega',{},['o1']); }); // tentativa de alterar grupo travado
+  T('grupo travado não é alterado por aplicar', await p.evaluate(()=>DATA.obras[0].equipe[0].modelo==='media'));
+  await p.click('.mcTrava'); await p.waitForTimeout(200);
+  T('destravar libera Desfazer', await p.locator('.mcDesfazer').count()===1);
   await p.click('.mcDesfazer'); await p.waitForTimeout(200);
   T('voltar por entrega nas marcadas', await p.evaluate(()=>DATA.obras.map(o=>o.equipe[0].modelo||'').join('|'))==='||');
   await p.evaluate(()=>{ aprovarEntrega(DATA.obras[1],DATA.obras[1].equipe[0],DATA.obras[1].equipe[0].etapas[0]); render(); });

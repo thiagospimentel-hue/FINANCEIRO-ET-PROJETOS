@@ -1461,7 +1461,8 @@ function aplicarModeloPagamento(colabId,modo,cfg,obraId){
     (o.equipe||[]).forEach(m=>{
       if(m.colaboradorId!==colabId || m.inativo) return;
       if(membroTemMovimento(m)){ bloq++; return; }
-      if(modo==='media'){ m.modelo='media'; m.media={inicio:cfg.inicio,meses:+cfg.meses,ret:+cfg.ret,dia:+cfg.dia}; if(cfg.fim) m.media.fim=cfg.fim; if(cfg.grupoId) m.media.grupoId=cfg.grupoId; if(cfg.grupo) m.media.grupo=cfg.grupo; m.etapas=mediaEtapas(cfg); }
+      if(m.media&&m.media.travado&&!cfg.destravar){ bloq++; return; }
+      if(modo==='media'){ m.modelo='media'; m.media={inicio:cfg.inicio,meses:+cfg.meses,ret:+cfg.ret,dia:+cfg.dia,travado:true}; if(cfg.fim) m.media.fim=cfg.fim; if(cfg.grupoId) m.media.grupoId=cfg.grupoId; if(cfg.grupo) m.media.grupo=cfg.grupo; m.etapas=mediaEtapas(cfg); }
       else { delete m.modelo; delete m.media; m.etapas=etapasCoordPadrao(); }
       ok++;
     });
@@ -1508,20 +1509,21 @@ function mediaColabHtml(u){
   let tot=0;
   const linhas=vinc.map(({o,ms})=>{
     const valor=ms.reduce((a,m)=>a+equipeMembroValor(o,m),0);
-    const bloq=ms.some(membroTemMovimento);
+    const trav=ms.some(m=>m.media&&m.media.travado);
+    const bloq=ms.some(membroTemMovimento)||trav;
     const med=ms.find(m=>m.modelo==='media');
     const sel=!bloq&&st.obras.includes(o.id); if(sel) tot+=valor;
     const atual=med?`média ${med.media.meses}x desde ${esc(med.media.inicio)}`:'por entrega';
-    return `<tr><td><label><input type="checkbox" class="mcOb" data-u="${cc}" data-o="${esc(o.id)}" ${sel?'checked':''} ${bloq?'disabled':''}> ${esc(o.nomeObra)}</label></td><td class="num">${fmt(valor)}</td><td class="small">${atual}${bloq?' · já tem aprovação/pagamento (não alterável)':''}</td></tr>`;
+    return `<tr><td><label><input type="checkbox" class="mcOb" data-u="${cc}" data-o="${esc(o.id)}" ${sel?'checked':''} ${bloq?'disabled':''}> ${esc(o.nomeObra)}</label></td><td class="num">${fmt(valor)}</td><td class="small">${atual}${trav?' · 🔒 grupo travado (destrave para alterar)':bloq?' · já tem aprovação/pagamento (não alterável)':''}</td></tr>`;
   }).join('');
   const c=st.cfg, n=mesesPeriodo(c.inicio,c.fim), ret=+c.ret||0;
   const resumo=tot>0?`<p class="small">Grupo (obras marcadas): total <b>${fmt(tot)}</b> · parcela mensal <b>${fmt(tot*(100-ret)/100/n)}</b> por ${n} mês(es) · retido até a conclusão <b>${fmt(tot*ret/100)}</b></p>`:'<p class="small">Marque as obras que entram no grupo.</p>';
   // grupos já aplicados
   const gr={};
-  DATA.obras.forEach(o=>(o.equipe||[]).forEach(m=>{ if(m.colaboradorId!==u||m.inativo||m.modelo!=='media'||!m.media) return; const md=m.media; const k=md.grupoId||[md.inicio,md.meses,md.ret,md.dia].join('|'); const g=gr[k]=gr[k]||{md,obras:[],tot:0,nome:md.grupo||''}; if(!g.obras.find(x=>x.id===o.id)) g.obras.push({id:o.id,nome:o.nomeObra}); g.tot+=equipeMembroValor(o,m); }));
+  DATA.obras.forEach(o=>(o.equipe||[]).forEach(m=>{ if(m.colaboradorId!==u||m.inativo||m.modelo!=='media'||!m.media) return; const md=m.media; const k=md.grupoId||[md.inicio,md.meses,md.ret,md.dia].join('|'); const g=gr[k]=gr[k]||{md,obras:[],tot:0,nome:md.grupo||'',trav:!!md.travado}; if(!g.obras.find(x=>x.id===o.id)) g.obras.push({id:o.id,nome:o.nomeObra}); g.tot+=equipeMembroValor(o,m); }));
   const gHtml=Object.keys(gr).map(k=>{ const g=gr[k], md=g.md, fim=md.fim||mesDeslocar(md.inicio,(+md.meses||1)-1), nn=+md.meses||1;
-    return `<div class="servbox" style="margin:6px 0;"><div class="row-flex" style="justify-content:space-between;flex-wrap:wrap;gap:6px;"><div><b>${esc(g.nome||'Grupo de obras')}</b> <span class="small">${esc(md.inicio)} → ${esc(fim)} (${nn} meses · retenção ${esc(md.ret)}%)</span><div class="small">${g.obras.map(x=>esc(x.nome)).join(' · ')}</div><div class="small">Total <b>${fmt(g.tot)}</b> · parcela mensal <b>${fmt(g.tot*(100-(+md.ret||0))/100/nn)}</b> · retido <b>${fmt(g.tot*(+md.ret||0)/100)}</b></div></div>
-      <button class="btn secondary mcDesfazer" data-u="${cc}" data-o="${esc(g.obras.map(x=>x.id).join(','))}">Desfazer grupo</button></div></div>`; }).join('');
+    return `<div class="servbox" style="margin:6px 0;"><div class="row-flex" style="justify-content:space-between;flex-wrap:wrap;gap:6px;"><div><b>${g.trav?'🔒 ':''}${esc(g.nome||'Grupo de obras')}</b>${g.trav?' <span class="small">(travado)</span>':''} <span class="small">${esc(md.inicio)} → ${esc(fim)} (${nn} meses · retenção ${esc(md.ret)}%)</span><div class="small">${g.obras.map(x=>esc(x.nome)).join(' · ')}</div><div class="small">Total <b>${fmt(g.tot)}</b> · parcela mensal <b>${fmt(g.tot*(100-(+md.ret||0))/100/nn)}</b> · retido <b>${fmt(g.tot*(+md.ret||0)/100)}</b></div></div>
+      <div class="row-flex" style="gap:6px;"><button class="btn secondary mcTrava" data-u="${cc}" data-t="${g.trav?'0':'1'}" data-o="${esc(g.obras.map(x=>x.id).join(','))}">${g.trav?'Destravar':'Travar grupo'}</button>${g.trav?'':`<button class="btn secondary mcDesfazer" data-u="${cc}" data-o="${esc(g.obras.map(x=>x.id).join(','))}">Desfazer grupo</button>`}</div></div></div>`; }).join('');
   return `<div class="servbox" style="background:var(--accent-bg);margin-top:10px;"><b>Pagamento por média — grupo de obras</b>
     <p class="small" style="margin:2px 0 6px;">Marque as obras do grupo e defina o período (início e finalização): o valor dele(a) nessas obras é dividido em parcelas mensais dentro do período, e a retenção fica guardada até cada obra ser concluída.</p>
     ${gHtml?`<div style="margin-bottom:8px;"><span class="small">Grupos aplicados</span>${gHtml}</div>`:''}
@@ -3676,6 +3678,7 @@ function attachMain(){
     });
     document.querySelectorAll('.mcOb').forEach(i=>i.onchange=e=>{ const st=mediaColabEstado(i.dataset.u); st.obras=st.obras.filter(x=>x!==i.dataset.o); if(e.target.checked) st.obras.push(i.dataset.o); setTimeout(render,0); });
     document.querySelectorAll('.mcCfg').forEach(i=>i.onchange=e=>{ const st=mediaColabEstado(i.dataset.u); st.cfg[i.dataset.f]=e.target.value; const c=st.cfg; if(c.inicio&&(!c.fim||c.fim<c.inicio)) c.fim=c.inicio; setTimeout(render,0); });
+    document.querySelectorAll('.mcTrava').forEach(b=>b.onclick=()=>{ const t=b.dataset.t==='1'; if(!t&&!confirm('Destravar o grupo? Ele poderá ser alterado ou desfeito.')) return; const ids=b.dataset.o.split(','); let n=0; DATA.obras.forEach(o=>{ if(!ids.includes(o.id)) return; (o.equipe||[]).forEach(m=>{ if(m.colaboradorId===b.dataset.u&&m.media){ if(t) m.media.travado=true; else delete m.media.travado; n++; } }); }); logAcao((t?'Grupo de média travado: ':'Grupo de média destravado: ')+colabNome(b.dataset.u)+' ('+n+' vínculo(s))'); save(DATA); setTimeout(render,0); });
     document.querySelectorAll('.mcDesfazer').forEach(b=>b.onclick=()=>{ if(!confirm('Desfazer o grupo e voltar essas obras para "por entrega"? (obras com aprovação ou pagamento não são alteradas)')) return; const r=aplicarModeloPagamento(b.dataset.u,'entrega',{},b.dataset.o.split(',')); logAcao('Grupo de média desfeito: '+colabNome(b.dataset.u)+' ('+r.ok+' vínculo(s))'); if(r.bloq) alert(r.bloq+' vínculo(s) já têm aprovação ou pagamento e não foram alterados.'); save(DATA); setTimeout(render,0); });
     document.querySelectorAll('.mcAplicar').forEach(b=>b.onclick=()=>{
       const st=mediaColabEstado(b.dataset.u); if(!st.obras.length) return;

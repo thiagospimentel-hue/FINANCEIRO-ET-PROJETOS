@@ -24,6 +24,7 @@ const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwrig
   // aprovar uma parcela e tentar reaplicar -> bloqueia
   await p.evaluate(()=>{ const o=DATA.obras[0],m=o.equipe[0]; aprovarEntrega(o,m,m.etapas[0]); render(); });
   T('aprovar parcela define data de pagamento', await p.evaluate(()=>DATA.obras[0].equipe[0].etapas[0].data)==='2026-05-05');
+  await p.evaluate(()=>DATA.obras.forEach(o=>o.equipe.forEach(m=>{ if(m.media) delete m.media.travado; })));
   await p.selectOption('.gm-modo','entrega'); await p.click('.gmaplicar[data-esc="todas"]'); await p.waitForTimeout(200);
   const r2=await p.evaluate(()=>DATA.obras.map(o=>[o.equipe[0].etapas.length,o.equipe[0].modelo||'']));
   T('obra com aprovação não é alterada; a outra volta a 4 etapas', JSON.stringify(r2)==='[[7,"media"],[4,""]]', r2);
