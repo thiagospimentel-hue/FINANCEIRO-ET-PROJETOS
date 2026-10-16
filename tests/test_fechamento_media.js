@@ -37,5 +37,11 @@ const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwrig
   await p.evaluate(()=>{ window.prompt=()=>'teste'; }); await p.click('.pmDesf[data-m="2026-07"]'); await p.waitForTimeout(300);
   const dz=await p.evaluate(()=>({pg:pagamentosDoColaborador('u1').pago,reg:!!DATA.colaboradores[0].pagoRegistro,man:DATA.colaboradores[0].pagoMes['2026-07']}));
   T('desfazer estorna as baixas e libera o mês (valor manual mantido)', dz.pg===0&&!dz.reg&&dz.man===6000, dz);
+  // visão do colaborador
+  await p.waitForTimeout(2700); await p.evaluate(()=>{ registrarPagoMes('u1','2026-07','2026-07-10','c1'); });
+  const fc=await p.evaluate(()=>{ const f=fichaDe('u1'); return {n:f.conferencia.length,j:f.conferencia[0]}; });
+  T('ficha do colaborador leva a conferência mensal', fc.n===2&&fc.j.dev===10000&&fc.j.pago===6000&&fc.j.dif===4000&&fc.j.pagoEm==='2026-07-10', fc);
+  const html=await p.evaluate(()=>{ SB.on=false; SESSION={role:'colab',userId:'u1'}; const h=colabPagamentosView(); SESSION={role:'admin'}; return h; });
+  T('tela do colaborador mostra a conferência (devido, recebido, a receber, pago em)', /devido × recebido/.test(html)&&/10\.000,00/.test(html)&&/6\.000,00/.test(html)&&/a receber R\$[^<]*4\.000,00/.test(html)&&/10\/07\/2026/.test(html));
   T('sem erros', errs.length===0, errs); console.log(ok+' ok, '+ko+' falhas'); await b.close(); process.exit(ko?1:0);
 })();

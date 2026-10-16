@@ -2794,7 +2794,7 @@ function fichaDe(uid){
   // Ficha do colaborador: lista fechada de campos (o banco só devolve estes campos ao colaborador).
   const c=(DATA.colaboradores||[]).find(x=>x.id===uid)||{};
   const pg=pagamentosDoColaborador(uid,true);
-  return {colaborador:{id:uid,nome:c.nome||'',cargo:c.cargo||''},linhas:pg.linhas.map(l=>({obraId:l.obraId,obra:l.obra,tipo:l.tipo,equipeIdx:l.equipeIdx,etapaIdx:l.etapaIdx,despId:l.despId||null,papel:l.papel,p:l.p,val:l.val,pago:l.pago,saldo:l.saldo,sit:l.sit,concluido:l.concluido,aprovado:l.aprovado,pagarEm:l.pagarEm,data:l.data,mesAno:l.mesAno,baixas:(l.baixas||[]).map(b=>({id:b.id,data:b.data,valor:b.valor}))}))};
+  return {colaborador:{id:uid,nome:c.nome||'',cargo:c.cargo||''},linhas:pg.linhas.map(l=>({obraId:l.obraId,obra:l.obra,tipo:l.tipo,equipeIdx:l.equipeIdx,etapaIdx:l.etapaIdx,despId:l.despId||null,papel:l.papel,p:l.p,val:l.val,pago:l.pago,saldo:l.saldo,sit:l.sit,concluido:l.concluido,aprovado:l.aprovado,pagarEm:l.pagarEm,data:l.data,mesAno:l.mesAno,baixas:(l.baixas||[]).map(b=>({id:b.id,data:b.data,valor:b.valor}))})),conferencia:confMensalColab(uid).map(r=>({ym:r.ym,dev:r2(r.dev),pago:r2(r.pago),dif:r2(r.dif),acum:r2(r.acum),pagoEm:(((c.pagoRegistro||{})[r.ym])||{}).data||''}))};
 }
 function pagamentosDoColaborador(uid,todasAsObras){
   if(SB.on && SESSION.role==='colab'){
@@ -3042,6 +3042,15 @@ function colabPagamentosView(){
     }).join('');
     return `<div class="obracard"><div class="obrahead"><b>🏗️ ${esc(nome)}</b><span class="res">Contratado ${fmt(tot)} · Recebido <b class="pos">${fmt(pg)}</b></span></div>${rows}</div>`;
   }).join('') || `<div class="obracard"><div class="vazio">${linhas.length?'Nenhuma etapa com este filtro.':'Você ainda não tem etapas atribuídas.'}</div></div>`;
+  // conferência mensal (média): devido x pago, igual à do administrador, somente leitura
+  const conf=(SB.on&&SESSION.role==='colab')?((SB.ficha&&SB.ficha.conferencia)||[]):confMensalColab(SESSION.userId).map(r=>({ym:r.ym,dev:r.dev,pago:r.pago,dif:r.dif,acum:r.acum,pagoEm:((((u.pagoRegistro)||{})[r.ym])||{}).data||''}));
+  const hojeYm=hojeISO().slice(0,7);
+  const sitC=v=>Math.abs(v)<0.005?'<span class="small">em dia</span>':v>0?`<span class="neg">a receber ${fmt(v)}</span>`:`<span class="pos">recebido a mais ${fmt(-v)} (será descontado)</span>`;
+  const confHtml=conf.length?`<div class="card"><h2>Meu pagamento mensal — devido × recebido</h2>
+    <p class="small" style="margin:2px 0 8px;">Parcelas mensais combinadas e o que já foi pago em cada mês. Diferença positiva = ainda falta receber; negativa = recebido a mais, descontado nos próximos meses.</p>
+    <div style="overflow-x:auto;"><table><tr><th>Mês</th><th class="num">Devido</th><th class="num">Recebido</th><th class="num">Diferença do mês</th><th class="num">Acumulado</th><th>Situação</th><th>Pago em</th></tr>
+    ${conf.map(r=>`<tr><td>${esc(r.ym.slice(5)+'/'+r.ym.slice(0,4))}${r.ym===hojeYm?' <span class="small">(mês atual)</span>':''}</td><td class="num">${fmt(r.dev)}</td><td class="num ${r.pago>0?'pos':''}">${fmt(r.pago)}</td><td class="num ${r.dif>0.005?'neg':r.dif<-0.005?'pos':''}">${fmt(r.dif)}</td><td class="num">${fmt(r.acum)}</td><td>${sitC(r.acum)}</td><td>${r.pagoEm?'<span class="pos">✔ '+isoToBr(r.pagoEm)+'</span>':'<span class="small">—</span>'}</td></tr>`).join('')}
+    <tr><td><b>Total</b></td><td class="num"><b>${fmt(conf.reduce((a,r)=>a+r.dev,0))}</b></td><td class="num"><b>${fmt(conf.reduce((a,r)=>a+r.pago,0))}</b></td><td class="num"><b>${fmt(conf.reduce((a,r)=>a+r.dif,0))}</b></td><td></td><td>${sitC(conf.reduce((a,r)=>a+r.dif,0))}</td><td></td></tr></table></div></div>`:'';
   // pagamentos recebidos
   const recebidos=[]; linhas.forEach(l=>{ if(FILTER_MEUS_OBRA && l.obraId!==FILTER_MEUS_OBRA) return; (l.baixas||[]).forEach(b=>recebidos.push({data:b.data||'',obra:l.obra,etapa:l.papel,valor:b.valor})); });
   recebidos.sort((a,b)=>a.data<b.data?1:-1);
@@ -3065,6 +3074,7 @@ function colabPagamentosView(){
       <div class="chips">${chip('','Todas')}${chip('pendente','Em andamento')}${chip('aguardando','Aguardando aprovação')}${chip('receber','A receber')}${chip('pago','Pagas')}</div>
       <div class="row-flex"><label class="small">Obra:</label><select id="meusObra"><option value="">Todas</option>${obrasDoColab.map(o=>`<option value="${esc(o.id)}" ${FILTER_MEUS_OBRA===o.id?'selected':''}>${esc(o.nome)}</option>`).join('')}</select></div>
     </div></div>
+    ${confHtml}
     ${obraCards}
     <div class="card"><h2>Pagamentos recebidos</h2><table><tr><th>Data</th><th>Obra</th><th>Etapa</th><th class="num">Valor</th></tr>${recRows}</table></div>
     <p class="muted">Você só visualiza seus próprios valores. Dados de clientes e o financeiro completo são restritos ao Admin.</p>`;
