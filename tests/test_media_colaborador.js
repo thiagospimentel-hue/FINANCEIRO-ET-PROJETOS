@@ -10,13 +10,16 @@ const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwrig
     DATA.obras=[mk('o1','A'),mk('o2','B'),mk('o3','C')]; TAB='colaboradores'; render(); });
   T('painel de média no card do colaborador', await p.locator('.mcOb').count()===3);
   await p.check('.mcOb[data-o="o1"]'); await p.waitForTimeout(100); await p.check('.mcOb[data-o="o3"]'); await p.waitForTimeout(100);
-  await p.fill('.mcCfg[data-f="meses"]','4'); await p.press('.mcCfg[data-f="meses"]','Tab'); await p.waitForTimeout(100);
   await p.fill('.mcCfg[data-f="inicio"]','2026-11'); await p.press('.mcCfg[data-f="inicio"]','Tab'); await p.waitForTimeout(100);
+  await p.fill('.mcCfg[data-f="fim"]','2027-02'); await p.press('.mcCfg[data-f="fim"]','Tab'); await p.waitForTimeout(100);
+  await p.fill('.mcCfg[data-f="grupo"]','Grupo teste'); await p.press('.mcCfg[data-f="grupo"]','Tab'); await p.waitForTimeout(100);
   T('resumo mostra total 20.000 e parcela 4.500', /20\.000,00/.test(await p.innerText('.servbox')) && /4\.500,00/.test(await p.innerText('.servbox')), await p.innerText('.servbox'));
   await p.click('.mcAplicar[data-m="media"]'); await p.waitForTimeout(200);
   const r=await p.evaluate(()=>DATA.obras.map(o=>({md:o.equipe[0].modelo||'',n:o.equipe[0].etapas.length,ini:o.equipe[0].media&&o.equipe[0].media.inicio,m:o.equipe[0].media&&o.equipe[0].media.meses})));
+  T('grupo gravado com nome e fim', await p.evaluate(()=>{const md=DATA.obras[0].equipe[0].media; return md.grupo==='Grupo teste'&&md.fim==='2027-02'&&md.grupoId===DATA.obras[2].equipe[0].media.grupoId&&!!md.grupoId;}));
+  T('painel lista o grupo aplicado com as 2 obras', (await p.locator('.servbox:has-text("Grupos aplicados")').count())>0 && /Grupo teste/.test(await p.innerText('.servbox:has-text("Grupos aplicados")')) && /A · C/.test(await p.innerText(".servbox:has-text(\"Grupos aplicados\")")));
   T('só as obras marcadas ficam em média (4 parcelas + retenção)', r[0].md==='media'&&r[0].n===5&&r[0].m===4&&r[0].ini==='2026-11'&&r[2].md==='media'&&r[1].md==='', r);
-  await p.click('.mcAplicar[data-m="entrega"]'); await p.waitForTimeout(200);
+  await p.click('.mcDesfazer'); await p.waitForTimeout(200);
   T('voltar por entrega nas marcadas', await p.evaluate(()=>DATA.obras.map(o=>o.equipe[0].modelo||'').join('|'))==='||');
   await p.evaluate(()=>{ aprovarEntrega(DATA.obras[1],DATA.obras[1].equipe[0],DATA.obras[1].equipe[0].etapas[0]); render(); });
   T('obra com aprovação fica desabilitada', await p.locator('.mcOb[data-o="o2"]').isDisabled());

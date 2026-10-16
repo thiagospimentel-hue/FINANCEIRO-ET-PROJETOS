@@ -1431,7 +1431,8 @@ function equipeGridHtml(obra,arr){
 
 // ===== Pagamento por média mensal (período + retenção final) =====
 const MES_ABREV=['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
-function mediaPadrao(){ return {inicio:hojeISO().slice(0,7),meses:6,ret:10,dia:5}; }
+function mediaPadrao(){ const i=hojeISO().slice(0,7); return {inicio:i,fim:mesDeslocar(i,5),meses:6,ret:10,dia:5,grupo:''}; }
+function mesesPeriodo(a,b){ if(!a||!b) return 1; const [ya,ma]=a.split('-').map(Number), [yb,mb]=b.split('-').map(Number); return Math.max(1,Math.min(36,(yb-ya)*12+(mb-ma)+1)); }
 function mediaEtapas(cfg){
   const n=Math.max(1,Math.min(36,Math.round(+cfg.meses)||6)), ret=Math.max(0,Math.min(50,+cfg.ret||0)), dia=Math.max(1,Math.min(28,Math.round(+cfg.dia)||5));
   const base=Math.round((100-ret)/n*1e4)/1e4; const et=[]; let acum=0;
@@ -1460,7 +1461,7 @@ function aplicarModeloPagamento(colabId,modo,cfg,obraId){
     (o.equipe||[]).forEach(m=>{
       if(m.colaboradorId!==colabId || m.inativo) return;
       if(membroTemMovimento(m)){ bloq++; return; }
-      if(modo==='media'){ m.modelo='media'; m.media={inicio:cfg.inicio,meses:+cfg.meses,ret:+cfg.ret,dia:+cfg.dia}; m.etapas=mediaEtapas(cfg); }
+      if(modo==='media'){ m.modelo='media'; m.media={inicio:cfg.inicio,meses:+cfg.meses,ret:+cfg.ret,dia:+cfg.dia}; if(cfg.fim) m.media.fim=cfg.fim; if(cfg.grupoId) m.media.grupoId=cfg.grupoId; if(cfg.grupo) m.media.grupo=cfg.grupo; m.etapas=mediaEtapas(cfg); }
       else { delete m.modelo; delete m.media; m.etapas=etapasCoordPadrao(); }
       ok++;
     });
@@ -1497,7 +1498,7 @@ let MEDIA_COLAB={};
 function mediaColabEstado(u){
   let st=MEDIA_COLAB[u];
   if(!st){ let ref=null; DATA.obras.forEach(o=>(o.equipe||[]).forEach(m=>{ if(!ref&&m.colaboradorId===u&&m.modelo==='media'&&m.media&&!m.inativo) ref=m.media; }));
-    st=MEDIA_COLAB[u]={obras:[],cfg:ref?{...ref}:mediaPadrao()}; }
+    st=MEDIA_COLAB[u]={obras:[],cfg:ref?{...ref,fim:ref.fim||mesDeslocar(ref.inicio,(+ref.meses||1)-1),grupo:'',grupoId:undefined}:mediaPadrao()}; }
   return st;
 }
 function mediaColabHtml(u){
@@ -1513,19 +1514,28 @@ function mediaColabHtml(u){
     const atual=med?`média ${med.media.meses}x desde ${esc(med.media.inicio)}`:'por entrega';
     return `<tr><td><label><input type="checkbox" class="mcOb" data-u="${cc}" data-o="${esc(o.id)}" ${sel?'checked':''} ${bloq?'disabled':''}> ${esc(o.nomeObra)}</label></td><td class="num">${fmt(valor)}</td><td class="small">${atual}${bloq?' · já tem aprovação/pagamento (não alterável)':''}</td></tr>`;
   }).join('');
-  const c=st.cfg, n=Math.max(1,+c.meses||1), ret=+c.ret||0;
-  const resumo=tot>0?`<p class="small">Obras marcadas: total <b>${fmt(tot)}</b> · parcela mensal <b>${fmt(tot*(100-ret)/100/n)}</b> por ${n} mês(es) · retido até a conclusão <b>${fmt(tot*ret/100)}</b></p>`:'<p class="small">Marque as obras que entram na média.</p>';
-  return `<div class="servbox" style="background:var(--accent-bg);margin-top:10px;"><b>Pagamento por média</b>
-    <p class="small" style="margin:2px 0 6px;">Marque as obras e defina o período: o valor dele(a) em cada obra é dividido em parcelas mensais, e a retenção fica guardada até a obra ser concluída.</p>
+  const c=st.cfg, n=mesesPeriodo(c.inicio,c.fim), ret=+c.ret||0;
+  const resumo=tot>0?`<p class="small">Grupo (obras marcadas): total <b>${fmt(tot)}</b> · parcela mensal <b>${fmt(tot*(100-ret)/100/n)}</b> por ${n} mês(es) · retido até a conclusão <b>${fmt(tot*ret/100)}</b></p>`:'<p class="small">Marque as obras que entram no grupo.</p>';
+  // grupos já aplicados
+  const gr={};
+  DATA.obras.forEach(o=>(o.equipe||[]).forEach(m=>{ if(m.colaboradorId!==u||m.inativo||m.modelo!=='media'||!m.media) return; const md=m.media; const k=md.grupoId||[md.inicio,md.meses,md.ret,md.dia].join('|'); const g=gr[k]=gr[k]||{md,obras:[],tot:0,nome:md.grupo||''}; if(!g.obras.find(x=>x.id===o.id)) g.obras.push({id:o.id,nome:o.nomeObra}); g.tot+=equipeMembroValor(o,m); }));
+  const gHtml=Object.keys(gr).map(k=>{ const g=gr[k], md=g.md, fim=md.fim||mesDeslocar(md.inicio,(+md.meses||1)-1), nn=+md.meses||1;
+    return `<div class="servbox" style="margin:6px 0;"><div class="row-flex" style="justify-content:space-between;flex-wrap:wrap;gap:6px;"><div><b>${esc(g.nome||'Grupo de obras')}</b> <span class="small">${esc(md.inicio)} → ${esc(fim)} (${nn} meses · retenção ${esc(md.ret)}%)</span><div class="small">${g.obras.map(x=>esc(x.nome)).join(' · ')}</div><div class="small">Total <b>${fmt(g.tot)}</b> · parcela mensal <b>${fmt(g.tot*(100-(+md.ret||0))/100/nn)}</b> · retido <b>${fmt(g.tot*(+md.ret||0)/100)}</b></div></div>
+      <button class="btn secondary mcDesfazer" data-u="${cc}" data-o="${esc(g.obras.map(x=>x.id).join(','))}">Desfazer grupo</button></div></div>`; }).join('');
+  return `<div class="servbox" style="background:var(--accent-bg);margin-top:10px;"><b>Pagamento por média — grupo de obras</b>
+    <p class="small" style="margin:2px 0 6px;">Marque as obras do grupo e defina o período (início e finalização): o valor dele(a) nessas obras é dividido em parcelas mensais dentro do período, e a retenção fica guardada até cada obra ser concluída.</p>
+    ${gHtml?`<div style="margin-bottom:8px;"><span class="small">Grupos aplicados</span>${gHtml}</div>`:''}
     <table><tr><th>Obra</th><th class="num">Valor dele(a)</th><th>Forma atual</th></tr>${linhas}</table>
     <div class="row-flex" style="flex-wrap:wrap;gap:8px;margin-top:8px;align-items:center;">
+      <label class="small">nome do grupo <input type="text" class="mcCfg" data-u="${cc}" data-f="grupo" value="${esc(c.grupo||'')}" placeholder="ex.: Grupo 2º semestre" style="width:170px;"></label>
       <label class="small">início <input type="month" class="mcCfg" data-u="${cc}" data-f="inicio" value="${esc(c.inicio)}"></label>
-      <label class="small">meses <input type="number" min="1" max="36" class="pct-input mcCfg" data-u="${cc}" data-f="meses" value="${esc(c.meses)}"></label>
+      <label class="small">finalização <input type="month" class="mcCfg" data-u="${cc}" data-f="fim" value="${esc(c.fim)}"></label>
+      <span class="small"><b>${n}</b> mês(es)</span>
       <label class="small">retenção % <input type="number" min="0" max="50" class="pct-input mcCfg" data-u="${cc}" data-f="ret" value="${esc(c.ret)}"></label>
       <label class="small">dia do pagamento <input type="number" min="1" max="28" class="pct-input mcCfg" data-u="${cc}" data-f="dia" value="${esc(c.dia)}"></label>
     </div>
     ${resumo}
-    <div class="row-flex" style="gap:8px;"><button class="btn mcAplicar" data-u="${cc}" data-m="media" ${tot>0?'':'disabled'}>Aplicar média nas obras marcadas</button><button class="btn secondary mcAplicar" data-u="${cc}" data-m="entrega" ${st.obras.length?'':'disabled'}>Voltar para "por entrega"</button></div></div>`;
+    <div class="row-flex" style="gap:8px;"><button class="btn mcAplicar" data-u="${cc}" data-m="media" ${tot>0?'':'disabled'}>Aplicar média ao grupo</button><button class="btn secondary mcAplicar" data-u="${cc}" data-m="entrega" ${st.obras.length?'':'disabled'}>Voltar para "por entrega"</button></div></div>`;
 }
 // Percentual padrão do colaborador (fixado no cadastro): '' = % sobre o líquido total (Geral); demais chaves = tipoId da disciplina
 function padraoColab(u){ const c=DATA.colaboradores.find(x=>x.id===u); const p=c&&c.padrao; return p&&Object.keys(p).some(k=>+p[k]>0)?p:null; }
@@ -1963,7 +1973,7 @@ function faturamentoDashboardCard(){
     </div>
     <div style="overflow-x:auto;margin-top:8px;">
     <table><tr><th>Obra</th><th>Etapa</th><th class="num">Valor</th><th>Nº NF</th><th>Emissão NF</th><th>Vencimento</th><th style="text-align:center;">Situação</th></tr>
-    ${rows || '<tr><td colspan="7" class="small">Nenhuma etapa encontrada com esse filtro.</td></tr>'}
+    ${rows || '<tr><td colspan="8" class="small">Nenhuma etapa encontrada com esse filtro.</td></tr>'}
     </table>
     </div>
   </div>`;
@@ -2246,9 +2256,9 @@ function resumoView(){
   const STATUS_BADGE_RESUMO={pronto:'faturada',parcial:'concluida',pendente:'andamento'};
   const hoje=hojeISO();
   const obrasHtml=resumosPorObra.map(({obra,etapas})=>{
-    let totValor=0, totRec=0;
+    let totValor=0, totRec=0, totPagoMan=0;
     const rows=etapas.map(e=>{
-      totValor+=e.valor; totRec+=Math.min(e.recebido,e.valor);
+      totValor+=e.valor; totRec+=Math.min(e.recebido,e.valor); const pm=+(((obra.etapasPagamento||[])[e.idx]||{}).valorPagoManual)||0; totPagoMan+=pm;
       const situacao = e.status==='sem_entrega'
         ? '<span class="small">—</span>'
         : `<span class="badge badge-${STATUS_BADGE_RESUMO[e.status]}">${STATUS_LABEL_RESUMO[e.status]}${e.status==='parcial'?' ('+e.concluidos+'/'+e.totalDeliv+')':''}</span>`;
@@ -2260,6 +2270,7 @@ function resumoView(){
         <td><b>${esc(e.nome)}</b><div class="small">${e.aditivoId?'aditivo':pct(e.pct)} · ${situacao}</div></td>
         <td class="num">${fmt(e.valor)}${e.travado?' <span title="Valor congelado: já há NF emitida ou recebimento, então mudanças no contrato não alteram esta etapa">🔒</span>':''}${e.recebido>0.005?`<div class="small">recebido ${fmt(Math.min(e.recebido,e.valor))}</div>`:''}</td>
         <td class="num">${fmt(liqFonte(e.valor))}${e.recebido>0.005?`<div class="small">recebido ${fmt(liqFonte(Math.min(e.recebido,e.valor)))}</div>`:''}</td>
+        <td class="num"><input type="text" inputmode="decimal" class="val-input valPagoMan" data-o="${esc(obra.id)}" data-i="${e.idx}" value="${pm?pm.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}):''}" placeholder="0,00" style="width:110px;text-align:right;">${pm?`<div class="small ${pm>=liqFonte(e.valor)-0.005?'pos':'neg'}">dif. ${fmt(pm-liqFonte(e.valor))}</div>`:''}</td>
         <td><div class="row2"><input type="text" class="nfNumero" data-o="${esc(obra.id)}" data-i="${e.idx}" value="${e.nfNumero||''}" placeholder="nº da NF" style="width:90px;"><input type="text" inputmode="numeric" class="nfData dateBr" data-o="${esc(obra.id)}" data-i="${e.idx}" value="${isoToBr(e.nfData)}" placeholder="emissão" maxlength="10" style="width:105px;"></div></td>
         <td><div class="stk"><input type="text" inputmode="numeric" class="etapaVenc dateBr" data-o="${esc(obra.id)}" data-i="${e.idx}" value="${isoToBr(e.vencimento)}" placeholder="dd/mm/aaaa" maxlength="10" style="width:130px;${vencido?'border-color:var(--bad);color:var(--bad);':''}">${vencido&&!e.pago&&e.recebido<=0.005?'<span class="badge" style="background:var(--bad);color:#fff;width:fit-content;">Vencida</span>':''}</div></td>
         <td style="min-width:190px;">${formaCobrancaCell(obra,e)}</td>
@@ -2269,8 +2280,8 @@ function resumoView(){
     return `<div class="card">
       <h2>🏗️ ${esc(obra.nomeObra)} <span class="small">${obra.codigo?'· '+obra.codigo:''}</span></h2>
       <div style="overflow-x:auto;">
-      <table class="cobtab"><tr><th>Etapa</th><th class="num">Valor bruto</th><th class="num" title="Valor bruto menos 6,15% de imposto retido na fonte">Líquido (−6,15%)</th><th>Nota fiscal</th><th>Vencimento</th><th>Forma de cobrança</th><th>Recebimento</th></tr>${rows || '<tr><td colspan="6" class="small">Nenhuma etapa de pagamento cadastrada nesta obra.</td></tr>'}
-      <tr class="hdr"><td>Total</td><td class="num">${fmt(totValor)}</td><td class="num">${fmt(liqFonte(totValor))}</td><td colspan="2" class="num">Recebido: ${fmt(totRec)}<div class="small">líquido ${fmt(liqFonte(totRec))}</div></td><td colspan="2" class="num">A receber: ${fmt(Math.max(0,totValor-totRec))}<div class="small">líquido ${fmt(liqFonte(Math.max(0,totValor-totRec)))}</div></td></tr></table>
+      <table class="cobtab"><tr><th>Etapa</th><th class="num">Valor bruto</th><th class="num" title="Valor bruto menos 6,15% de imposto retido na fonte">Líquido (−6,15%)</th><th class="num" title="Digite manualmente o valor que de fato entrou (líquido do banco)">Valor pago (manual)</th><th>Nota fiscal</th><th>Vencimento</th><th>Forma de cobrança</th><th>Recebimento</th></tr>${rows || '<tr><td colspan="6" class="small">Nenhuma etapa de pagamento cadastrada nesta obra.</td></tr>'}
+      <tr class="hdr"><td>Total</td><td class="num">${fmt(totValor)}</td><td class="num">${fmt(liqFonte(totValor))}</td><td class="num">${fmt(totPagoMan)}</td><td colspan="2" class="num">Recebido: ${fmt(totRec)}<div class="small">líquido ${fmt(liqFonte(totRec))}</div></td><td colspan="2" class="num">A receber: ${fmt(Math.max(0,totValor-totRec))}<div class="small">líquido ${fmt(liqFonte(Math.max(0,totValor-totRec)))}</div></td></tr></table>
       </div>
     </div>`;
   }).join('');
@@ -3407,6 +3418,7 @@ function attachMain(){
   if(TAB==='resumo' && SESSION.role==='admin'){
     document.querySelectorAll('.nfNumero').forEach(i=>i.onchange=e=>{const obra=DATA.obras.find(o=>o.id===i.dataset.o); if(!obra)return; const et=obra.etapasPagamento[i.dataset.i]; if(!et)return; et.nfNumero=e.target.value; sincEtapaContrato(obra,et); save(DATA);});
 
+    document.querySelectorAll('.valPagoMan').forEach(i=>i.onchange=e=>{ const o=DATA.obras.find(x=>x.id===i.dataset.o); const et=o&&o.etapasPagamento[i.dataset.i]; if(!et) return; const v=parseBRL(e.target.value); if(v>0) et.valorPagoManual=Math.round(v*100)/100; else delete et.valorPagoManual; save(DATA); setTimeout(render,0); });
     document.querySelectorAll('.etForma').forEach(i=>i.onchange=e=>{ const o=DATA.obras.find(x=>x.id===i.dataset.o); const et=o&&o.etapasPagamento[i.dataset.i]; if(!et) return; et.formaPgto=e.target.value; if(!et.formaPgto) delete et.formaPgto; else if(!et.contaId){ const cs=contasDaEmpresa(o.empresaId); if(cs.length) et.contaId=cs[0].id; } sincContasCaixa(); save(DATA); setTimeout(render,0); });
     document.querySelectorAll('.etConta').forEach(i=>i.onchange=e=>{ const o=DATA.obras.find(x=>x.id===i.dataset.o); const et=o&&o.etapasPagamento[i.dataset.i]; if(!et) return; et.contaId=e.target.value; if(!et.contaId) delete et.contaId; sincContasCaixa(); save(DATA); setTimeout(render,0); });
     // Campos de data digitados (dd/mm/aaaa): aplica máscara enquanto digita e converte p/ ISO ao sair do campo.
@@ -3663,11 +3675,13 @@ function attachMain(){
       catch(err){ acMsg(b.dataset.u,err.message); }
     });
     document.querySelectorAll('.mcOb').forEach(i=>i.onchange=e=>{ const st=mediaColabEstado(i.dataset.u); st.obras=st.obras.filter(x=>x!==i.dataset.o); if(e.target.checked) st.obras.push(i.dataset.o); setTimeout(render,0); });
-    document.querySelectorAll('.mcCfg').forEach(i=>i.onchange=e=>{ const st=mediaColabEstado(i.dataset.u); st.cfg[i.dataset.f]=e.target.value; setTimeout(render,0); });
+    document.querySelectorAll('.mcCfg').forEach(i=>i.onchange=e=>{ const st=mediaColabEstado(i.dataset.u); st.cfg[i.dataset.f]=e.target.value; const c=st.cfg; if(c.inicio&&(!c.fim||c.fim<c.inicio)) c.fim=c.inicio; setTimeout(render,0); });
+    document.querySelectorAll('.mcDesfazer').forEach(b=>b.onclick=()=>{ if(!confirm('Desfazer o grupo e voltar essas obras para "por entrega"? (obras com aprovação ou pagamento não são alteradas)')) return; const r=aplicarModeloPagamento(b.dataset.u,'entrega',{},b.dataset.o.split(',')); logAcao('Grupo de média desfeito: '+colabNome(b.dataset.u)+' ('+r.ok+' vínculo(s))'); if(r.bloq) alert(r.bloq+' vínculo(s) já têm aprovação ou pagamento e não foram alterados.'); save(DATA); setTimeout(render,0); });
     document.querySelectorAll('.mcAplicar').forEach(b=>b.onclick=()=>{
       const st=mediaColabEstado(b.dataset.u); if(!st.obras.length) return;
-      const r=aplicarModeloPagamento(b.dataset.u,b.dataset.m,st.cfg,st.obras.slice());
-      logAcao('Forma de pagamento ('+(b.dataset.m==='media'?'média mensal, '+st.cfg.meses+' meses desde '+st.cfg.inicio:'por entrega')+') aplicada a '+colabNome(b.dataset.u)+' em '+r.ok+' vínculo(s)');
+      const cfg={...st.cfg,meses:mesesPeriodo(st.cfg.inicio,st.cfg.fim)}; if(b.dataset.m==='media'){ cfg.grupoId=novoId('gr'); cfg.grupo=(st.cfg.grupo||'').trim()||('Grupo '+cfg.inicio+' a '+cfg.fim); }
+      const r=aplicarModeloPagamento(b.dataset.u,b.dataset.m,cfg,st.obras.slice());
+      logAcao('Forma de pagamento ('+(b.dataset.m==='media'?'média mensal, grupo '+cfg.grupo+', '+cfg.inicio+' a '+cfg.fim:'por entrega')+') aplicada a '+colabNome(b.dataset.u)+' em '+r.ok+' vínculo(s)');
       if(r.bloq) alert(r.bloq+' vínculo(s) já têm aprovação ou pagamento e não foram alterados.');
       save(DATA); setTimeout(render,0);
     });

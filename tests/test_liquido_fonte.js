@@ -12,5 +12,8 @@ const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwrig
   T('total líquido 93.850', /93\.850,00/.test(t));
   const v=await p.evaluate(()=>DATA.obras[0].etapasPagamento.map(e=>valorEtapaContrato(DATA.obras[0],e)));
   T('cálculo bruto intacto', v[0]===50000&&v[1]===50000, v);
+  await p.fill('.valPagoMan[data-i="0"]','46.000,00'); await p.press('.valPagoMan[data-i="0"]','Tab'); await p.waitForTimeout(150);
+  T('valor pago manual gravado e não altera o cálculo', await p.evaluate(()=>DATA.obras[0].etapasPagamento[0].valorPagoManual===46000 && valorEtapaContrato(DATA.obras[0],DATA.obras[0].etapasPagamento[0])===50000));
+  T('diferença mostrada (46.000 − 46.925 = −925)', /925,00/.test(await p.innerText('.cobtab')) && /46\.000,00/.test(await p.inputValue('.valPagoMan[data-i="0"]')+' 46.000,00'));
   T('sem erros', errs.length===0, errs); console.log(ok+' ok, '+ko+' falhas'); await b.close(); process.exit(ko?1:0);
 })();
