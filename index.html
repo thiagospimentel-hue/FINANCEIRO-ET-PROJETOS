@@ -1526,18 +1526,50 @@ function mediaMesEmp(uid){
       g.itens.push({obra:d.obra,papel:'Média mensal',p:0,val}); g.total+=val; }); });
   return out;
 }
+function etapasMesMedia(uid,ym){
+  const out=[]; DATA.obras.forEach(o=>(o.equipe||[]).forEach((m,mi)=>{ if(m.colaboradorId!==uid||m.inativo||m.modelo!=='media') return;
+    (m.etapas||[]).forEach((e,ei)=>{ if(e.mensal&&e.pagarEm&&e.pagarEm.slice(0,7)===ym) out.push({o,m,mi,e,ei,v:valorEquipeEtapa(o,m,e)}); }); }));
+  return out;
+}
+// Registra o pagamento do mês: baixa nas parcelas (rateio pelo devido) + saída no caixa
+function registrarPagoMes(uid,ym,dataIso,contaId){
+  const c=DATA.colaboradores.find(x=>x.id===uid); const val=c&&c.pagoMes&&+c.pagoMes[ym]; if(!(val>0)) return false;
+  if(c.pagoRegistro&&c.pagoRegistro[ym]) return false;
+  const es=etapasMesMedia(uid,ym); if(!es.length) return false;
+  const tot=es.reduce((a,x)=>a+x.v,0); let rest=r2(val); const regs=[];
+  es.forEach((x,i)=>{ const parte=i===es.length-1?rest:r2(tot>0?val*x.v/tot:val/es.length); rest=r2(rest-parte); if(!(parte>0)) return;
+    if(!temValor(x.e.valorFixo)) x.e.valorFixo=x.v;
+    const b=lancarBaixa(x.e,{tipo:'saida',valor:parte,data:dataIso,desc:'Pagamento — '+colabNome(uid)+' — '+x.o.nomeObra+' — '+(x.m.papel||'Equipe')+' / '+x.e.nome,obraId:x.o.id,colaboradorId:uid,origem:{tipo:'equipe',obraId:x.o.id,refId:x.m.id+':'+x.e.nome},contaId:contaId||undefined});
+    if(b) regs.push({o:x.o.id,mi:x.mi,ei:x.ei,b:b.id,v:parte}); });
+  if(!regs.length) return false;
+  c.pagoRegistro=c.pagoRegistro||{}; c.pagoRegistro[ym]={data:dataIso,contaId:contaId||'',valor:val,regs};
+  logAcao('Pagamento do mês registrado: '+colabNome(uid)+' — '+ym.slice(5)+'/'+ym.slice(0,4)+' — '+fmt(val));
+  return true;
+}
+function desfazerPagoMes(uid,ym){
+  const c=DATA.colaboradores.find(x=>x.id===uid); const rg=c&&c.pagoRegistro&&c.pagoRegistro[ym]; if(!rg) return false;
+  const mot=motivoEstorno(); if(!mot) return false;
+  rg.regs.forEach(x=>{ const o=DATA.obras.find(q=>q.id===x.o); const e=o&&o.equipe[x.mi]&&o.equipe[x.mi].etapas[x.ei]; if(e) desfazerBaixa(e,x.b,mot); });
+  delete c.pagoRegistro[ym]; if(!Object.keys(c.pagoRegistro).length) delete c.pagoRegistro;
+  logAcao('Pagamento do mês desfeito: '+colabNome(uid)+' — '+ym.slice(5)+'/'+ym.slice(0,4)); return true;
+}
 function confMensalHtml(u){
   const rows=confMensalColab(u); if(!rows.length) return '';
   const cc=esc(u); const hoje=new Date().toISOString().slice(0,7);
   const tD=rows.reduce((a,r)=>a+r.dev,0), tP=rows.reduce((a,r)=>a+r.pago,0), saldo=tD-tP;
+  const cdU=DATA.colaboradores.find(x=>x.id===u)||{}; const pr=cdU.pagoRegistro||{};
+  const contasTodas=[]; (DATA.minhasEmpresas||[]).forEach(e=>(e.contas||[]).forEach(k=>contasTodas.push({id:k.id,t:contaRotulo(k)+' — '+(e.nome||'')})));
+  const regCell=(u,r)=>{ const g=pr[r.ym]; if(g){ const ct=g.contaId&&acharConta(g.contaId); return `<span class="pos">✔ pago em ${isoToBr(g.data)}</span>${ct?`<div class="small">${esc(contaRotulo(ct.conta))}</div>`:''}<button class="btn secondary pmDesf" data-u="${esc(u)}" data-m="${esc(r.ym)}" style="padding:0 6px;">desfazer</button>`; }
+    if(!(r.man>0)||!(r.dev>0)) return '<span class="small">digite o valor pago</span>';
+    return `<div class="row-flex" style="gap:4px;flex-wrap:wrap;"><input type="text" inputmode="numeric" class="pmData dateBr" value="${isoToBr(hojeISO())}" maxlength="10" style="width:92px;" title="Data do pagamento"><select class="pmConta" style="max-width:170px;"><option value="">— conta —</option>${contasTodas.map(k=>`<option value="${esc(k.id)}">${esc(k.t)}</option>`).join('')}</select><button class="btn secondary pmReg" data-u="${esc(u)}" data-m="${esc(r.ym)}">Registrar pagamento</button></div>`; };
   const rotulo=v=>Math.abs(v)<0.005?'<span class="small">em dia</span>':v>0?`<span class="neg">pagar +${fmt(v)}</span>`:`<span class="pos">descontar ${fmt(-v)}</span>`;
   return `<div class="servbox" style="margin-top:10px;"><b>Conferência mensal — devido × pago</b>
     <p class="small" style="margin:2px 0 6px;">Digite o que você realmente pagou em cada mês. Se deixar em branco, vale o que foi baixado no sistema. Diferença positiva = falta pagar; negativa = pagou a mais (descontar nas próximas).</p>
-    <table><tr><th>Mês</th><th class="num">Devido</th><th class="num">Pago (manual)</th><th class="num">Diferença do mês</th><th class="num">Acumulado</th><th>Situação</th></tr>
+    <table><tr><th>Mês</th><th class="num">Devido</th><th class="num">Pago (manual)</th><th class="num">Diferença do mês</th><th class="num">Acumulado</th><th>Situação</th><th>Registrar pagamento</th></tr>
     ${rows.map(r=>`<tr><td>${esc(r.ym.slice(5)+'/'+r.ym.slice(0,4))}${r.ym===hoje?' <span class="small">(mês atual)</span>':''}</td><td class="num">${fmt(r.dev)}</td>
-      <td class="num"><input type="text" inputmode="decimal" class="val-input pagoMes" data-u="${cc}" data-m="${esc(r.ym)}" value="${r.man!==null?r.man.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}):''}" placeholder="${r.sis?r.sis.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}):'0,00'}" style="width:120px;text-align:right;"></td>
-      <td class="num ${r.dif>0.005?'neg':r.dif<-0.005?'pos':''}">${fmt(r.dif)}</td><td class="num">${fmt(r.acum)}</td><td>${rotulo(r.acum)}</td></tr>`).join('')}
-    <tr><td><b>Total</b></td><td class="num"><b>${fmt(tD)}</b></td><td class="num"><b>${fmt(tP)}</b></td><td class="num"><b>${fmt(saldo)}</b></td><td></td><td>${rotulo(saldo)}</td></tr></table></div>`;
+      <td class="num"><input type="text" inputmode="decimal" class="val-input pagoMes" ${pr[r.ym]?'disabled title="Pagamento registrado — desfaça para alterar"':''} data-u="${cc}" data-m="${esc(r.ym)}" value="${r.man!==null?r.man.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}):''}" placeholder="${r.sis?r.sis.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}):'0,00'}" style="width:120px;text-align:right;"></td>
+      <td class="num ${r.dif>0.005?'neg':r.dif<-0.005?'pos':''}">${fmt(r.dif)}</td><td class="num">${fmt(r.acum)}</td><td>${rotulo(r.acum)}</td><td>${regCell(u,r)}</td></tr>`).join('')}
+    <tr><td><b>Total</b></td><td class="num"><b>${fmt(tD)}</b></td><td class="num"><b>${fmt(tP)}</b></td><td class="num"><b>${fmt(saldo)}</b></td><td></td><td>${rotulo(saldo)}</td><td></td></tr></table></div>`;
 }
 function mediaColabHtml(u){
   const st=mediaColabEstado(u), cc=esc(u);
@@ -3722,6 +3754,8 @@ function attachMain(){
     document.querySelectorAll('.mcOb').forEach(i=>i.onchange=e=>{ const st=mediaColabEstado(i.dataset.u); st.obras=st.obras.filter(x=>x!==i.dataset.o); if(e.target.checked) st.obras.push(i.dataset.o); setTimeout(render,0); });
     document.querySelectorAll('.mcCfg').forEach(i=>i.onchange=e=>{ const st=mediaColabEstado(i.dataset.u); st.cfg[i.dataset.f]=e.target.value; const c=st.cfg; if(c.inicio&&(!c.fim||c.fim<c.inicio)) c.fim=c.inicio; setTimeout(render,0); });
     document.querySelectorAll('.pagoMes').forEach(i=>i.onchange=e=>{ const c=DATA.colaboradores.find(x=>x.id===i.dataset.u); if(!c) return; c.pagoMes=c.pagoMes||{}; const t=String(e.target.value).trim(); if(t===''){ delete c.pagoMes[i.dataset.m]; } else { const v=parseBRL(t); if(isNaN(v)){ delete c.pagoMes[i.dataset.m]; } else c.pagoMes[i.dataset.m]=v; } if(!Object.keys(c.pagoMes).length) delete c.pagoMes; save(DATA); setTimeout(render,0); });
+    document.querySelectorAll('.pmReg').forEach(b=>b.onclick=()=>{ const tr=b.closest('div'); const iso=brToIso(tr.querySelector('.pmData').value); if(!iso){ tr.querySelector('.pmData').style.borderColor='var(--bad)'; return; } if(registrarPagoMes(b.dataset.u,b.dataset.m,iso,tr.querySelector('.pmConta').value)){ save(DATA); } setTimeout(render,0); });
+    document.querySelectorAll('.pmDesf').forEach(b=>b.onclick=()=>{ if(desfazerPagoMes(b.dataset.u,b.dataset.m)) save(DATA); setTimeout(render,0); });
     document.querySelectorAll('.mcTrava').forEach(b=>b.onclick=()=>{ const t=b.dataset.t==='1'; if(!t&&!confirm('Destravar o grupo? Ele poderá ser alterado ou desfeito.')) return; const ids=b.dataset.o.split(','); let n=0; DATA.obras.forEach(o=>{ if(!ids.includes(o.id)) return; (o.equipe||[]).forEach(m=>{ if(m.colaboradorId===b.dataset.u&&m.media){ if(t) m.media.travado=true; else delete m.media.travado; n++; } }); }); logAcao((t?'Grupo de média travado: ':'Grupo de média destravado: ')+colabNome(b.dataset.u)+' ('+n+' vínculo(s))'); save(DATA); setTimeout(render,0); });
     document.querySelectorAll('.mcDesfazer').forEach(b=>b.onclick=()=>{ if(!confirm('Desfazer o grupo e voltar essas obras para "por entrega"? (obras com aprovação ou pagamento não são alteradas)')) return; const r=aplicarModeloPagamento(b.dataset.u,'entrega',{},b.dataset.o.split(',')); logAcao('Grupo de média desfeito: '+colabNome(b.dataset.u)+' ('+r.ok+' vínculo(s))'); if(r.bloq) alert(r.bloq+' vínculo(s) já têm aprovação ou pagamento e não foram alterados.'); save(DATA); setTimeout(render,0); });
     document.querySelectorAll('.mcAplicar').forEach(b=>b.onclick=()=>{

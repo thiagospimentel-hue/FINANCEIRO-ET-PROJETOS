@@ -26,5 +26,16 @@ const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwrig
   T('associado: botão Gerar recibo e nenhum Solicitar NF', await p.evaluate(()=>document.querySelectorAll('.gerarrecibo').length===1 && document.querySelectorAll('.gerarnf').length===0));
   const d=await p.evaluate(()=>{ const x=dadosDocColab('u1','jul/2026','e2'); return {t:Math.round(x.total),n:x.itens.length,emp:x.emp.nome}; });
   T('recibo com o valor digitado (6.000) em nome da Pimentel', d.t===6000&&/Pimentel/.test(d.emp), d);
+  // registrar pagamento do mês
+  await p.evaluate(()=>{ DATA.minhasEmpresas[0].contas=[{id:'c1',banco:'Itaú',apelido:'Itaú ET',agencia:'1',conta:'2'}]; DATA.caixa=[]; TAB='colaboradores'; OPEN_COLAB='u1'; render(); });
+  T('botão registrar aparece após digitar o valor', await p.locator('.pmReg[data-m="2026-07"]').count()===1 && await p.locator('.pmReg[data-m="2026-08"]').count()===0);
+  await p.selectOption('.pmConta','c1'); await p.fill('.pmData','10/07/2026'); await p.click('.pmReg[data-m="2026-07"]'); await p.waitForTimeout(300);
+  const rg=await p.evaluate(()=>({cx:DATA.caixa.filter(m=>m.tipo==='saida').map(m=>m.valor+'@'+m.contaId+'@'+m.data),bx:DATA.obras.map(o=>o.equipe[0].etapas[0].baixas.reduce((a,b)=>a+b.valor,0)),pg:pagamentosDoColaborador('u1').pago}));
+  T('registrar lança saída no caixa (com conta) e baixa nas parcelas, rateado', rg.cx.length===2 && rg.cx.every(x=>/^3000@c1@2026-07-10$/.test(x)) && rg.bx[0]===3000 && rg.bx[1]===3000 && rg.pg===6000, rg);
+  T('mês fica marcado como pago e campo travado', await p.locator('.pmDesf[data-m="2026-07"]').count()===1 && await p.locator('.pagoMes[data-m="2026-07"]').isDisabled());
+  T('não duplica ao registrar de novo', await p.evaluate(()=>registrarPagoMes('u1','2026-07','2026-07-10','c1'))===false && await p.evaluate(()=>DATA.caixa.filter(m=>m.tipo==='saida'&&!m.estornoDe).length)===2);
+  await p.evaluate(()=>{ window.prompt=()=>'teste'; }); await p.click('.pmDesf[data-m="2026-07"]'); await p.waitForTimeout(300);
+  const dz=await p.evaluate(()=>({pg:pagamentosDoColaborador('u1').pago,reg:!!DATA.colaboradores[0].pagoRegistro,man:DATA.colaboradores[0].pagoMes['2026-07']}));
+  T('desfazer estorna as baixas e libera o mês (valor manual mantido)', dz.pg===0&&!dz.reg&&dz.man===6000, dz);
   T('sem erros', errs.length===0, errs); console.log(ok+' ok, '+ko+' falhas'); await b.close(); process.exit(ko?1:0);
 })();
