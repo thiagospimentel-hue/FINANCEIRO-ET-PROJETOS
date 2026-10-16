@@ -909,7 +909,7 @@ function save(d){ if(!SB.on){ try{ localStorage.setItem(LS_KEY, JSON.stringify(d
 let DATA=load();
 let SESSION={role:null,userId:null};
 let TAB='dashboard';
-let OPEN_OBRA=null;
+let OPEN_OBRA=null, OBRA_BUSCA='';
 let FILTER_COLAB='';
 let OPEN_COLAB=null, SEL_COLAB=null, COLAB_BUSCA='';
 let OPEN_EQUIPE={};
@@ -2107,7 +2107,7 @@ function obraOptions(selectedId){
 function obrasView(){
   let obrasFiltradas = DATA.obras.filter(obraMatchesFilter);
   if(FILTER_STATUS) obrasFiltradas = obrasFiltradas.filter(o=>o.status===FILTER_STATUS);
-  const cards=obrasFiltradas.map(obra=>{
+  const cards=obrasFiltradas.filter(o=>o.id===OPEN_OBRA).map(obra=>{
     const r=calcObra(obra);
     const real=realizadoObra(obra.id);
     const resumo=resumoCustosObra(obra);
@@ -2258,7 +2258,24 @@ function obrasView(){
       `:''}
     </div>`;
   }).join('');
-  return filterBar() + cards+`<button class="btn" id="addobra">+ Nova obra</button>`+(docPodeUsar()?` <label class="btn secondary" style="cursor:pointer;display:inline-block;">+ Nova obra a partir do contrato (PDF)<input type="file" id="importCt" accept="application/pdf" style="display:none;"></label>`:'');
+  const idxO=obrasFiltradas.findIndex(o=>o.id===OPEN_OBRA);
+  if(idxO>=0){ const ant=obrasFiltradas[idxO-1], prox=obrasFiltradas[idxO+1];
+    return `<div class="row-flex" style="justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px;"><button class="btn secondary obraVoltar">← Voltar à lista (${obrasFiltradas.length} obras)</button>
+      <div class="row-flex" style="gap:6px;"><button class="btn secondary obraAbrir" ${ant?`data-o="${esc(ant.id)}" title="${esc(ant.nomeObra)}"`:'disabled'}>‹ Anterior</button><span class="small">${idxO+1} de ${obrasFiltradas.length}</span><button class="btn secondary obraAbrir" ${prox?`data-o="${esc(prox.id)}" title="${esc(prox.nomeObra)}"`:'disabled'}>Próximo ›</button></div></div>${cards}`; }
+  const linhasO=obrasFiltradas.map(o=>{ const rc=calcObra(o), rl=realizadoObra(o.id); const emp=o.empresaId?empresaNome(o.empresaId):'';
+    return `<tr class="obraLinha" data-o="${esc(o.id)}" data-q="${esc(((o.nomeObra||'')+' '+(o.codigo||'')+' '+((o.cliente||{}).nome||'')).toLowerCase())}" style="cursor:pointer;">
+      <td><b>${esc(o.nomeObra||'(sem nome)')}</b><div class="small">${o.codigo?esc(o.codigo)+' · ':''}${esc((o.cliente||{}).nome||'cliente não definido')}</div></td>
+      <td><span class="badge badge-${o.status||'andamento'}">${STATUS_LABEL[o.status]||'Em andamento'}</span></td>
+      <td class="small">${esc(emp)}</td><td class="num">${fmt(rc.valorTotal)}</td><td class="num pos">${fmt(rl.entradas)}</td><td class="num">${(o.equipe||[]).filter(m=>!m.inativo).length}</td>
+      <td><button class="btn secondary obraAbrir" data-o="${esc(o.id)}">Abrir</button></td></tr>`; }).join('');
+  const totO=obrasFiltradas.reduce((a,o)=>a+calcObra(o).valorTotal,0);
+  const listaO=`<div class="card"><div class="row-flex" style="justify-content:space-between;flex-wrap:wrap;gap:8px;"><h2 style="margin:0;">Obras <span class="small">(${obrasFiltradas.length} de ${DATA.obras.length})</span></h2>
+      <input type="text" id="obraBusca" placeholder="Buscar obra, código ou cliente…" value="${esc(OBRA_BUSCA)}" style="max-width:300px;"></div>
+    <div style="overflow-x:auto;"><table style="margin-top:8px;"><tr><th>Obra / cliente</th><th>Status</th><th>Empresa</th><th class="num">Valor do contrato</th><th class="num">Recebido</th><th class="num">Equipe</th><th></th></tr>
+    ${linhasO||'<tr><td colspan="7" class="small">Nenhuma obra neste filtro.</td></tr>'}
+    <tr class="hdr"><td>Total</td><td></td><td></td><td class="num">${fmt(totO)}</td><td colspan="3"></td></tr></table></div>
+    <p class="small" style="margin-top:6px;">Clique em uma obra para abrir só ela.</p></div>`;
+  return filterBar() + listaO+`<button class="btn" id="addobra">+ Nova obra</button>`+(docPodeUsar()?` <label class="btn secondary" style="cursor:pointer;display:inline-block;">+ Nova obra a partir do contrato (PDF)<input type="file" id="importCt" accept="application/pdf" style="display:none;"></label>`:'');
 }
 
 
@@ -3377,6 +3394,10 @@ function attachMain(){
   if(TAB==='obras' && SESSION.role==='admin'){
     const filterSel=document.getElementById('filterColab');
     if(filterSel) filterSel.onchange=e=>{FILTER_COLAB=e.target.value;render();};
+    document.querySelectorAll('.obraAbrir').forEach(b=>b.onclick=e=>{ e.stopPropagation(); if(!b.dataset.o) return; OPEN_OBRA=b.dataset.o; render(); window.scrollTo(0,0); });
+    document.querySelectorAll('.obraLinha').forEach(tr=>tr.onclick=()=>{ OPEN_OBRA=tr.dataset.o; render(); window.scrollTo(0,0); });
+    document.querySelectorAll('.obraVoltar').forEach(b=>b.onclick=()=>{ OPEN_OBRA=null; render(); window.scrollTo(0,0); });
+    const ob=document.getElementById('obraBusca'); if(ob) ob.oninput=()=>{ OBRA_BUSCA=ob.value; const q=ob.value.toLowerCase().trim(); document.querySelectorAll('.obraLinha').forEach(tr=>{ tr.style.display=!q||tr.dataset.q.includes(q)?'':'none'; }); };
     document.querySelectorAll('.toggleobra').forEach(b=>b.onclick=()=>{OPEN_OBRA=OPEN_OBRA===b.dataset.o?null:b.dataset.o;render();});
     document.querySelectorAll('.delobra').forEach(b=>b.onclick=()=>{
       const id=b.dataset.o, o=DATA.obras.find(x=>x.id===id); if(!o||obraEmUso(id)) return;
