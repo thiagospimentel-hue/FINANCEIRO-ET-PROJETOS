@@ -1357,6 +1357,75 @@ function attachSync(){
   if(desc) desc.onclick=()=>{ try{ localStorage.removeItem(PRE_KEY); }catch(e){} render(); };
 }
 
+
+// ===== Equipe da obra — visão simples (grade colaborador × disciplina) =====
+let EQUIPE_MODO='grade', GRID_EXTRA={}, GRID_ABERTO={};
+function equipeGridModelo(obra){
+  const eq=obra.equipe||[];
+  const bases=[{id:'',nome:'Geral'}].concat((obra.servicos||[]).map(sv=>({id:sv.id,nome:tipoNome(sv.tipoId)})));
+  const baseOk=new Set(bases.map(b=>b.id));
+  const cel={}, colabs=[], legado=[];
+  eq.forEach((m,mi)=>{
+    const b=(m.baseIds||[]); const base=b.length===0?'':(b.length===1?b[0]:null);
+    const k=m.colaboradorId+'|'+base;
+    if(!m.colaboradorId||base===null||!baseOk.has(base)||m.inativo||cel[k]!==undefined){ legado.push(mi); return; }
+    cel[k]=mi; if(!colabs.includes(m.colaboradorId)) colabs.push(m.colaboradorId);
+  });
+  (GRID_EXTRA[obra.id]||[]).forEach(c=>{ if(!colabs.includes(c)) colabs.push(c); });
+  return {bases,cel,colabs,legado};
+}
+function equipeGridHtml(obra,arr){
+  const M=equipeGridModelo(obra), eq=obra.equipe||[];
+  const oid=esc(obra.id);
+  const topo=`<div class="row-flex" style="gap:6px;margin-bottom:6px;"><span class="small">Visão:</span><button class="btn eqmodo" data-m="grade" disabled>Simples (grade)</button><button class="btn secondary eqmodo" data-m="lista">Detalhada (lista)</button></div>`;
+  const cabec=M.bases.map(b=>`<th class="num">${esc(b.nome)}${b.id===''?'<div class="small" style="font-weight:normal;">líq. total</div>':`<div class="small" style="font-weight:normal;">${fmt(baseValorMembro(obra,{baseIds:[b.id]}))}</div>`}</th>`).join('');
+  const somaCol={}; M.bases.forEach(b=>somaCol[b.id]={pct:0,val:0});
+  const linhas=M.colabs.map(c=>{
+    const membros=M.bases.map(b=>M.cel[c+'|'+b.id]).filter(x=>x!==undefined);
+    const todos=eq.map((m,mi)=>m.colaboradorId===c?mi:-1).filter(x=>x>=0);
+    const papel=(eq[todos[0]]||{}).papel||colabCargo(c)||'';
+    let totalVal=0;
+    const cels=M.bases.map(b=>{
+      const mi=M.cel[c+'|'+b.id]; const m=mi!==undefined?eq[mi]:null;
+      const v=m?equipeMembroValor(obra,m):0; totalVal+=v;
+      if(m){ somaCol[b.id].pct+=(m.pct||0); somaCol[b.id].val+=v; }
+      return `<td class="num"><input type="number" step="0.1" min="0" class="pct-input gcell" data-o="${oid}" data-c="${esc(c)}" data-b="${esc(b.id)}" value="${m&&m.pct?m.pct:''}" placeholder="—">${m&&m.pct?`<div class="small">${fmt(v)}</div>`:''}</td>`;
+    }).join('');
+    const hist=todos.some(mi=>equipeTemHistorico(eq[mi]));
+    const aberto=!!GRID_ABERTO[obra.id+'|'+c];
+    const det=aberto?`<tr><td colspan="${M.bases.length+3}">${todos.map(mi=>arr[mi]).join('')}</td></tr>`:'';
+    return `<tr>
+      <td><b>${esc(colabNome(c))}</b></td>
+      <td><input type="text" class="gcargo" list="papeisEquipe" data-o="${oid}" data-c="${esc(c)}" value="${esc(papel)}" style="width:105px;"></td>
+      ${cels}
+      <td class="num"><b>${fmt(totalVal)}</b></td>
+      <td style="white-space:nowrap;"><input type="number" step="0.1" min="0" class="pct-input gall" data-c="${esc(c)}" placeholder="%" style="width:54px;" title="Mesmo % em todas as disciplinas"><button class="btn secondary gallbtn" data-o="${oid}" data-c="${esc(c)}" title="Aplicar esse % em todas as disciplinas">todas</button>
+        <button class="btn secondary gdet" data-o="${oid}" data-c="${esc(c)}">${aberto?'Ocultar':'Etapas'}</button>
+        ${hist?`<button class="btn secondary gina" data-o="${oid}" data-c="${esc(c)}" title="Tem pagamentos; não pode ser removido">Inativar</button>`:`<button class="btn danger gdel" data-o="${oid}" data-c="${esc(c)}">x</button>`}</td>
+    </tr>${det}`;
+  }).join('');
+  const rodape=`<tr style="font-weight:600;"><td colspan="2">Total distribuído</td>${M.bases.map(b=>{ const t=somaCol[b.id]; return `<td class="num ${t.pct>100.0001?'neg':''}">${t.pct?pct(t.pct):'—'}<div class="small">${t.val?fmt(t.val):''}</div></td>`; }).join('')}<td class="num">${fmt(M.bases.reduce((a,b)=>a+somaCol[b.id].val,0))}</td><td></td></tr>`;
+  const livres=DATA.colaboradores.filter(u=>!M.colabs.includes(u.id));
+  const add=`<div class="row-flex" style="margin-top:8px;gap:6px;"><select class="gaddsel" data-o="${oid}">${livres.map(u=>`<option value="${esc(u.id)}">${esc(u.nome)}</option>`).join('')||'<option value="">(todos já estão na obra)</option>'}</select><button class="btn secondary gadd" data-o="${oid}">+ colaborador</button></div>`;
+  const leg=M.legado.length?`<details style="margin-top:10px;"${M.legado.length?' open':''}><summary class="small"><b>Vínculos especiais (${M.legado.length})</b> — base combinada, inativos ou duplicados; editados na visão detalhada</summary>${M.legado.map(mi=>arr[mi]).join('')}</details>`:'';
+  return topo+`<p class="small">Digite o % de cada colaborador sobre o líquido de cada disciplina (vazio = não participa). "Geral" = % sobre o líquido total da obra. Mudar um % recalcula tudo; as etapas de pagamento (30/30/30/10) continuam as mesmas.</p>
+    <div style="overflow-x:auto;"><table><tr><th>Colaborador</th><th>Cargo</th>${cabec}<th class="num">Total R$</th><th></th></tr>${linhas||`<tr><td colspan="${M.bases.length+4}" class="small">Nenhum colaborador na obra.</td></tr>`}${rodape}</table></div>${add}${leg}`;
+}
+function equipeGridSet(obraId,colab,base,pct){
+  const obra=DATA.obras.find(o=>o.id===obraId); if(!obra) return;
+  obra.equipe=obra.equipe||[];
+  const M=equipeGridModelo(obra); const mi=M.cel[colab+'|'+base];
+  pct=Math.max(0,Math.round((parseFloat(pct)||0)*1e4)/1e4);
+  if(mi!==undefined){
+    const m=obra.equipe[mi];
+    if(pct>0) m.pct=pct;
+    else if(equipeTemHistorico(m)) m.pct=0;
+    else obra.equipe.splice(mi,1);
+  } else if(pct>0){
+    const outro=obra.equipe.find(m=>m.colaboradorId===colab);
+    obra.equipe.push({id:novoId('eq'),colaboradorId:colab,papel:(outro&&outro.papel)||colabCargo(colab)||'',pct,baseIds:base?[base]:[],etapas:etapasCoordPadrao()});
+  }
+}
 function colabOptions(selectedId){
   return DATA.colaboradores.map(u=>`<option value="${esc(u.id)}" ${u.id===selectedId?'selected':''}>${esc(u.nome)}</option>`).join('');
 }
@@ -1685,7 +1754,7 @@ function obrasView(){
     const real=realizadoObra(obra.id);
     const resumo=resumoCustosObra(obra);
     const open=OPEN_OBRA===obra.id || !!FILTER_COLAB;
-    const equipeRows=(obra.equipe||[]).map((m,mi)=>{
+    const equipeRowsArr=(obra.equipe||[]).map((m,mi)=>{
       const valor=equipeMembroValor(obra,m);
       const baseLabel=baseLabelMembro(obra,m);
       const expanded=!!OPEN_EQUIPE[m.id];
@@ -1726,7 +1795,8 @@ function obrasView(){
           ${etapaRows}
         </table>`:''}
       </div>`;
-    }).join('');
+    });
+    const equipeRows=equipeRowsArr.join('');
     const servRows=obra.servicos.map(s=>{
       const rs=calcServico(s);
       const tipoOpts=DATA.tiposServico.map(t=>`<option value="${esc(t.id)}" ${t.id===s.tipoId?'selected':''}>${esc(t.nome)}</option>`).join('');
@@ -1813,8 +1883,8 @@ function obrasView(){
       <div class="coordbox">
         <h3 style="margin-top:0;">Equipe da obra</h3>
         <p class="small">Cadastre coordenadores, auxiliares, equipe de detalhamento etc. Para cada um, defina o papel e o percentual pago — sobre o líquido total da obra (coordenação, documentação) ou sobre o líquido de uma disciplina específica (ex: detalhamento só em cima de Elétrica), dividido nas 4 etapas fixas (Projeto Básico 30%, Pré-Executivo 30%, Executivo 30%, Revisão de Executivo 10%). Clique em "Ver etapas" para cada pessoa; ela mesma marca a etapa como entregue na aba dela.</p>
-        ${equipeRows || '<p class="small">Nenhum integrante definido.</p>'}
-        <button class="btn secondary addequipe" data-o="${esc(obra.id)}">+ integrante da equipe</button>
+        ${EQUIPE_MODO==='lista' ? `<div class="row-flex" style="gap:6px;margin-bottom:6px;"><span class="small">Visão:</span><button class="btn secondary eqmodo" data-m="grade">Simples (grade)</button><button class="btn eqmodo" data-m="lista" disabled>Detalhada (lista)</button></div>`+ (equipeRows || '<p class="small">Nenhum integrante definido.</p>') : equipeGridHtml(obra,equipeRowsArr)}
+        ${EQUIPE_MODO==='lista'?`<button class="btn secondary addequipe" data-o="${esc(obra.id)}">+ integrante da equipe</button>`:''}
       </div>
       <datalist id="papeisEquipe">
         <option value="Coordenador"></option>
@@ -2825,6 +2895,24 @@ function attachMain(){
       save(DATA); render();
     });
     document.querySelectorAll('.equipepapel').forEach(i=>i.onchange=e=>{const obra=DATA.obras.find(o=>o.id===i.dataset.o);obra.equipe[i.dataset.i].papel=e.target.value;save(DATA);render();});
+    document.querySelectorAll('.eqmodo').forEach(b=>b.onclick=()=>{EQUIPE_MODO=b.dataset.m;render();});
+    document.querySelectorAll('.gcell').forEach(i=>i.onchange=e=>{ equipeGridSet(i.dataset.o,i.dataset.c,i.dataset.b,e.target.value); save(DATA); setTimeout(render,0); });
+    document.querySelectorAll('.gcargo').forEach(i=>i.onchange=e=>{ const o=DATA.obras.find(x=>x.id===i.dataset.o); (o.equipe||[]).forEach(m=>{ if(m.colaboradorId===i.dataset.c) m.papel=e.target.value; }); save(DATA); setTimeout(render,0); });
+    document.querySelectorAll('.gallbtn').forEach(b=>b.onclick=()=>{
+      const o=DATA.obras.find(x=>x.id===b.dataset.o); const v=b.parentElement.querySelector('.gall').value; if(v===''||!o) return;
+      (o.servicos||[]).forEach(sv=>equipeGridSet(o.id,b.dataset.c,sv.id,v)); save(DATA); render();
+    });
+    document.querySelectorAll('.gdet').forEach(b=>b.onclick=()=>{ const k=b.dataset.o+'|'+b.dataset.c; GRID_ABERTO[k]=!GRID_ABERTO[k]; render(); });
+    document.querySelectorAll('.gadd').forEach(b=>b.onclick=()=>{ const sel=document.querySelector('.gaddsel[data-o="'+b.dataset.o+'"]'); if(!sel||!sel.value) return; (GRID_EXTRA[b.dataset.o]=GRID_EXTRA[b.dataset.o]||[]).push(sel.value); render(); });
+    document.querySelectorAll('.gdel').forEach(b=>b.onclick=()=>{
+      const o=DATA.obras.find(x=>x.id===b.dataset.o); if(!o) return;
+      if((o.equipe||[]).some(m=>m.colaboradorId===b.dataset.c&&equipeTemHistorico(m))) return;
+      o.equipe=(o.equipe||[]).filter(m=>m.colaboradorId!==b.dataset.c); GRID_EXTRA[o.id]=(GRID_EXTRA[o.id]||[]).filter(c=>c!==b.dataset.c); save(DATA); render();
+    });
+    document.querySelectorAll('.gina').forEach(b=>b.onclick=()=>{
+      const o=DATA.obras.find(x=>x.id===b.dataset.o); if(!o) return;
+      (o.equipe||[]).forEach(m=>{ if(m.colaboradorId===b.dataset.c) m.inativo=true; }); logAcao('Integrante inativado: '+colabNome(b.dataset.c)+' — '+o.nomeObra); save(DATA); render();
+    });
     document.querySelectorAll('.equipepct').forEach(i=>i.onchange=e=>{const obra=DATA.obras.find(o=>o.id===i.dataset.o);obra.equipe[i.dataset.i].pct=parseFloat(e.target.value)||0;save(DATA);render();});
     document.querySelectorAll('.addserv').forEach(b=>b.onclick=()=>{
       const obra=DATA.obras.find(o=>o.id===b.dataset.o);
