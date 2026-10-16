@@ -1598,12 +1598,12 @@ function mediaColabHtml(u){
   let tot=0;
   const linhas=vinc.map(({o,ms})=>{
     const valor=ms.reduce((a,m)=>a+equipeMembroValor(o,m),0);
-    const trav=ms.some(m=>m.media&&m.media.travado);
-    const bloq=ms.some(membroTemMovimento)||trav;
+    const trav=ms.some(m=>m.media&&m.media.travado), temPg=ms.some(membroTemMovimento);
+    const bloq=temPg||trav;
     const med=ms.find(m=>m.modelo==='media');
     const sel=!bloq&&st.obras.includes(o.id); if(sel) tot+=valor;
     const atual=med?`média ${med.media.meses}x desde ${esc(med.media.inicio)}`:'por entrega';
-    return `<tr><td><label><input type="checkbox" class="mcOb" data-u="${cc}" data-o="${esc(o.id)}" ${sel?'checked':''} ${bloq?'disabled':''}> ${esc(o.nomeObra)}</label></td><td class="num">${fmt(valor)}</td><td class="small">${atual}${trav?' · 🔒 grupo travado (destrave para alterar)':bloq?' · já tem aprovação/pagamento (não alterável)':''}</td></tr>`;
+    return `<tr><td><label><input type="checkbox" class="mcOb" data-u="${cc}" data-o="${esc(o.id)}" ${sel?'checked':''} ${bloq?'disabled':''}> ${esc(o.nomeObra)}</label></td><td class="num">${fmt(valor)}</td><td class="small">${atual}${trav?' · 🔒 grupo travado (destrave para alterar)'+(temPg?' e há pagamento registrado (desfaça o pagamento do mês na conferência)':''):bloq?' · 🔒 pagamento já registrado — para alterar, desfaça antes o pagamento do mês na conferência mensal':''}</td></tr>`;
   }).join('');
   const c=st.cfg, n=mesesPeriodo(c.inicio,c.fim), ret=+c.ret||0;
   const resumo=tot>0?`<p class="small">Grupo (obras marcadas): total <b>${fmt(tot)}</b> · parcela mensal <b>${fmt(tot*(100-ret)/100/n)}</b> por ${n} mês(es) · retido até a conclusão <b>${fmt(tot*ret/100)}</b></p>`:'<p class="small">Marque as obras que entram no grupo.</p>';

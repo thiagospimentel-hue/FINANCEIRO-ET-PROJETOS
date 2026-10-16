@@ -31,6 +31,7 @@ const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwrig
   await p.evaluate(()=>{ aplicarModeloPagamento('u1','entrega',{},['o1']); }); // aplicar sem destravar não altera
   T('grupo travado não é alterado por aplicar comum', await p.evaluate(()=>DATA.obras[0].equipe[0].modelo==='media'));
   await p.click('.mcTrava'); await p.waitForTimeout(200);
+  T('destravar libera as obras do grupo para marcar', await p.locator('.mcOb[disabled]').count()===0, await p.locator('.mcOb[disabled]').count());
   T('destravar libera o botão Voltar para por entrega', await p.locator('.mcDesfazer').count()===1);
   await p.click('.mcDesfazer'); await p.waitForTimeout(200);
   T('voltar por entrega nas marcadas', await p.evaluate(()=>DATA.obras.map(o=>o.equipe[0].modelo||'').join('|'))==='||');
