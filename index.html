@@ -1961,7 +1961,7 @@ function etapasBox(obra,r){
   const recebido = etapas.reduce((s,e)=> s + baixaTotal(e),0);
   return `<table>
     <tr><th>Etapa</th><th class="num">%</th><th class="num">Valor</th><th style="text-align:center;">Situação</th><th class="num">Recebido</th><th></th></tr>
-    ${rows || '<tr><td colspan="6" class="small">Nenhuma etapa cadastrada.</td></tr>'}
+    ${rows || '<tr><td colspan="7" class="small">Nenhuma etapa cadastrada.</td></tr>'}
     <tr class="hdr"><td>Total</td><td class="num">${pct(somaPct)}${Math.round(somaPct)!==100?' ⚠️':''}</td><td class="num">${fmt(r.valorTotal)}</td><td colspan="3" class="num">Recebido: ${fmt(recebido)} · registre NF e recebimentos em “Resumo p/ Cobrança”</td></tr>
   </table>
   ${Math.round(somaPct)!==100?'<p class="small" style="color:var(--bad);">A soma das etapas está diferente de 100% do valor da obra.</p>':''}
@@ -2134,6 +2134,8 @@ function obrasView(){
 const TIPOS_CONTA=['Conta corrente','Poupança','Conta pagamento'];
 function contasDaEmpresa(empId){ const e=(DATA.minhasEmpresas||[]).find(x=>x.id===empId); return (e&&e.contas)||[]; }
 function contaRotulo(c){ return [c.apelido||c.banco||'Conta', c.banco&&c.apelido?c.banco:'', c.agencia?'ag. '+c.agencia:'', c.conta?'c/ '+c.conta:''].filter(Boolean).join(' · '); }
+const RET_FONTE=6.15; // % de imposto retido na fonte pelo cliente (apenas exibição)
+const liqFonte=v=>Math.round(v*(100-RET_FONTE))/100;
 function sincContasCaixa(){
   let mudou=false;
   (DATA.caixa||[]).forEach(m=>{
@@ -2231,6 +2233,7 @@ function resumoView(){
       return `<tr>
         <td><b>${esc(e.nome)}</b><div class="small">${e.aditivoId?'aditivo':pct(e.pct)} · ${situacao}</div></td>
         <td class="num">${fmt(e.valor)}${e.travado?' <span title="Valor congelado: já há NF emitida ou recebimento, então mudanças no contrato não alteram esta etapa">🔒</span>':''}${e.recebido>0.005?`<div class="small">recebido ${fmt(Math.min(e.recebido,e.valor))}</div>`:''}</td>
+        <td class="num">${fmt(liqFonte(e.valor))}${e.recebido>0.005?`<div class="small">recebido ${fmt(liqFonte(Math.min(e.recebido,e.valor)))}</div>`:''}</td>
         <td><div class="row2"><input type="text" class="nfNumero" data-o="${esc(obra.id)}" data-i="${e.idx}" value="${e.nfNumero||''}" placeholder="nº da NF" style="width:90px;"><input type="text" inputmode="numeric" class="nfData dateBr" data-o="${esc(obra.id)}" data-i="${e.idx}" value="${isoToBr(e.nfData)}" placeholder="emissão" maxlength="10" style="width:105px;"></div></td>
         <td><div class="stk"><input type="text" inputmode="numeric" class="etapaVenc dateBr" data-o="${esc(obra.id)}" data-i="${e.idx}" value="${isoToBr(e.vencimento)}" placeholder="dd/mm/aaaa" maxlength="10" style="width:130px;${vencido?'border-color:var(--bad);color:var(--bad);':''}">${vencido&&!e.pago&&e.recebido<=0.005?'<span class="badge" style="background:var(--bad);color:#fff;width:fit-content;">Vencida</span>':''}</div></td>
         <td style="min-width:190px;">${formaCobrancaCell(obra,e)}</td>
@@ -2240,8 +2243,8 @@ function resumoView(){
     return `<div class="card">
       <h2>🏗️ ${esc(obra.nomeObra)} <span class="small">${obra.codigo?'· '+obra.codigo:''}</span></h2>
       <div style="overflow-x:auto;">
-      <table class="cobtab"><tr><th>Etapa</th><th class="num">Valor</th><th>Nota fiscal</th><th>Vencimento</th><th>Forma de cobrança</th><th>Recebimento</th></tr>${rows || '<tr><td colspan="6" class="small">Nenhuma etapa de pagamento cadastrada nesta obra.</td></tr>'}
-      <tr class="hdr"><td>Total</td><td class="num">${fmt(totValor)}</td><td colspan="2" class="num">Recebido: ${fmt(totRec)}</td><td colspan="2" class="num">A receber: ${fmt(Math.max(0,totValor-totRec))}</td></tr></table>
+      <table class="cobtab"><tr><th>Etapa</th><th class="num">Valor bruto</th><th class="num" title="Valor bruto menos 6,15% de imposto retido na fonte">Líquido (−6,15%)</th><th>Nota fiscal</th><th>Vencimento</th><th>Forma de cobrança</th><th>Recebimento</th></tr>${rows || '<tr><td colspan="6" class="small">Nenhuma etapa de pagamento cadastrada nesta obra.</td></tr>'}
+      <tr class="hdr"><td>Total</td><td class="num">${fmt(totValor)}</td><td class="num">${fmt(liqFonte(totValor))}</td><td colspan="2" class="num">Recebido: ${fmt(totRec)}<div class="small">líquido ${fmt(liqFonte(totRec))}</div></td><td colspan="2" class="num">A receber: ${fmt(Math.max(0,totValor-totRec))}<div class="small">líquido ${fmt(liqFonte(Math.max(0,totValor-totRec)))}</div></td></tr></table>
       </div>
     </div>`;
   }).join('');
