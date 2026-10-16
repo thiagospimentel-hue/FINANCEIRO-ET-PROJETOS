@@ -1453,7 +1453,7 @@ function membroTemMovimento(m){ return (m.etapas||[]).some(e=>(e.baixas||[]).len
 function aplicarModeloPagamento(colabId,modo,cfg,obraId){
   let ok=0,bloq=0;
   DATA.obras.forEach(o=>{
-    if(obraId && o.id!==obraId) return;
+    if(obraId && !(Array.isArray(obraId)?obraId.includes(o.id):o.id===obraId)) return;
     (o.equipe||[]).forEach(m=>{
       if(m.colaboradorId!==colabId || m.inativo) return;
       if(membroTemMovimento(m)){ bloq++; return; }
@@ -1487,6 +1487,42 @@ function mediaPainelHtml(obra,c,idxs){
     ${resumo}
     ${idxs.map(i=>eq[i]).filter(m=>m.etapas&&m.etapas.some(e=>e.retencao&&!e.aprovado)).map(m=>`<button class="btn secondary gmliberar" data-o="${oid}" data-id="${esc(m.id)}">Liberar retenção (${esc(m.papel||'')} ${pct(m.etapas.find(e=>e.retencao).pct)})</button>`).join(' ')}
   </div>`;
+}
+
+// Painel no cadastro do colaborador: escolher as obras e o período da média
+let MEDIA_COLAB={};
+function mediaColabEstado(u){
+  let st=MEDIA_COLAB[u];
+  if(!st){ let ref=null; DATA.obras.forEach(o=>(o.equipe||[]).forEach(m=>{ if(!ref&&m.colaboradorId===u&&m.modelo==='media'&&m.media&&!m.inativo) ref=m.media; }));
+    st=MEDIA_COLAB[u]={obras:[],cfg:ref?{...ref}:mediaPadrao()}; }
+  return st;
+}
+function mediaColabHtml(u){
+  const st=mediaColabEstado(u), cc=esc(u);
+  const vinc=DATA.obras.map(o=>({o,ms:(o.equipe||[]).filter(m=>m.colaboradorId===u&&!m.inativo)})).filter(x=>x.ms.length);
+  if(!vinc.length) return '';
+  let tot=0;
+  const linhas=vinc.map(({o,ms})=>{
+    const valor=ms.reduce((a,m)=>a+equipeMembroValor(o,m),0);
+    const bloq=ms.some(membroTemMovimento);
+    const med=ms.find(m=>m.modelo==='media');
+    const sel=!bloq&&st.obras.includes(o.id); if(sel) tot+=valor;
+    const atual=med?`média ${med.media.meses}x desde ${esc(med.media.inicio)}`:'por entrega';
+    return `<tr><td><label><input type="checkbox" class="mcOb" data-u="${cc}" data-o="${esc(o.id)}" ${sel?'checked':''} ${bloq?'disabled':''}> ${esc(o.nomeObra)}</label></td><td class="num">${fmt(valor)}</td><td class="small">${atual}${bloq?' · já tem aprovação/pagamento (não alterável)':''}</td></tr>`;
+  }).join('');
+  const c=st.cfg, n=Math.max(1,+c.meses||1), ret=+c.ret||0;
+  const resumo=tot>0?`<p class="small">Obras marcadas: total <b>${fmt(tot)}</b> · parcela mensal <b>${fmt(tot*(100-ret)/100/n)}</b> por ${n} mês(es) · retido até a conclusão <b>${fmt(tot*ret/100)}</b></p>`:'<p class="small">Marque as obras que entram na média.</p>';
+  return `<div class="servbox" style="background:var(--accent-bg);margin-top:10px;"><b>Pagamento por média</b>
+    <p class="small" style="margin:2px 0 6px;">Marque as obras e defina o período: o valor dele(a) em cada obra é dividido em parcelas mensais, e a retenção fica guardada até a obra ser concluída.</p>
+    <table><tr><th>Obra</th><th class="num">Valor dele(a)</th><th>Forma atual</th></tr>${linhas}</table>
+    <div class="row-flex" style="flex-wrap:wrap;gap:8px;margin-top:8px;align-items:center;">
+      <label class="small">início <input type="month" class="mcCfg" data-u="${cc}" data-f="inicio" value="${esc(c.inicio)}"></label>
+      <label class="small">meses <input type="number" min="1" max="36" class="pct-input mcCfg" data-u="${cc}" data-f="meses" value="${esc(c.meses)}"></label>
+      <label class="small">retenção % <input type="number" min="0" max="50" class="pct-input mcCfg" data-u="${cc}" data-f="ret" value="${esc(c.ret)}"></label>
+      <label class="small">dia do pagamento <input type="number" min="1" max="28" class="pct-input mcCfg" data-u="${cc}" data-f="dia" value="${esc(c.dia)}"></label>
+    </div>
+    ${resumo}
+    <div class="row-flex" style="gap:8px;"><button class="btn mcAplicar" data-u="${cc}" data-m="media" ${tot>0?'':'disabled'}>Aplicar média nas obras marcadas</button><button class="btn secondary mcAplicar" data-u="${cc}" data-m="entrega" ${st.obras.length?'':'disabled'}>Voltar para "por entrega"</button></div></div>`;
 }
 function equipeGridSet(obraId,colab,base,pct){
   const obra=DATA.obras.find(o=>o.id===obraId); if(!obra) return;
@@ -2732,6 +2768,7 @@ function colaboradoresView(){
       </div>
       ${acessoBox(u)}`:''}
       <div style="overflow-x:auto;"><table style="margin-top:10px;"><tr><th>Obra</th><th>Papel / etapa</th><th class="num">%</th><th class="num">Valor</th><th style="text-align:center;">Situação</th><th>Aprovação</th><th>Pagamento</th></tr>${linhasHtml}</table></div>
+      ${mediaColabHtml(u.id)}
       ${mesesHtml?`<h3 style="margin:12px 0 2px;">Fechamento por mês</h3>${mesesHtml}`:''}
       <div class="row-flex" style="justify-content:flex-end;gap:16px;margin-top:6px;">
         <span class="small">Contratado: <b>${fmt(total)}</b></span>
@@ -3542,6 +3579,15 @@ function attachMain(){
       if(!confirm('Remover o acesso de '+b.dataset.e+'? O colaborador deixa de conseguir entrar.')) return;
       try{ await sbAcesso('remover',b.dataset.e); await sbRecarregarAcessos(); logAcao('Acesso removido de '+colabNome(b.dataset.u)); render(); }
       catch(err){ acMsg(b.dataset.u,err.message); }
+    });
+    document.querySelectorAll('.mcOb').forEach(i=>i.onchange=e=>{ const st=mediaColabEstado(i.dataset.u); st.obras=st.obras.filter(x=>x!==i.dataset.o); if(e.target.checked) st.obras.push(i.dataset.o); setTimeout(render,0); });
+    document.querySelectorAll('.mcCfg').forEach(i=>i.onchange=e=>{ const st=mediaColabEstado(i.dataset.u); st.cfg[i.dataset.f]=e.target.value; setTimeout(render,0); });
+    document.querySelectorAll('.mcAplicar').forEach(b=>b.onclick=()=>{
+      const st=mediaColabEstado(b.dataset.u); if(!st.obras.length) return;
+      const r=aplicarModeloPagamento(b.dataset.u,b.dataset.m,st.cfg,st.obras.slice());
+      logAcao('Forma de pagamento ('+(b.dataset.m==='media'?'média mensal, '+st.cfg.meses+' meses desde '+st.cfg.inicio:'por entrega')+') aplicada a '+colabNome(b.dataset.u)+' em '+r.ok+' vínculo(s)');
+      if(r.bloq) alert(r.bloq+' vínculo(s) já têm aprovação ou pagamento e não foram alterados.');
+      save(DATA); setTimeout(render,0);
     });
     document.querySelectorAll('.togglecolab').forEach(b=>b.onclick=()=>{OPEN_COLAB=OPEN_COLAB===b.dataset.u?null:b.dataset.u;render();});
     document.querySelectorAll('.gerarrecibo').forEach(b=>b.onclick=()=>{ abrirReciboColaborador(b.dataset.u, b.dataset.mes, b.dataset.e); });
