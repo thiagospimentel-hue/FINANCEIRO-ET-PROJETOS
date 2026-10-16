@@ -1,0 +1,21 @@
+const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwright');
+(async()=>{
+  const b=await chromium.launch({executablePath:'/opt/pw-browsers/chromium'});
+  const p=await (await b.newContext({viewport:{width:1500,height:1400}})).newPage(); const errs=[]; p.on('pageerror',e=>errs.push(e.message)); p.on('dialog',d=>d.accept());
+  await p.goto('file:///home/claude/financeiro-et-projetos/index.html'); await p.waitForTimeout(500);
+  let ok=0,ko=0; const T=(n,c,d)=>{c?ok++:ko++;console.log((c?'PASS ':'FAIL ')+n+(d!==undefined?' '+JSON.stringify(d):''));};
+  await p.evaluate(()=>{ SESSION={role:'admin'}; DATA.tiposServico=[{id:'t1',nome:'Elétrica'}]; DATA.minhasEmpresas=[];
+    DATA.colaboradores=Array.from({length:18},(_,i)=>({id:'u'+i,nome:'Pessoa '+(i+1),cargo:i%2?'Projetista':'Coordenação'}));
+    DATA.obras=[]; SEL_COLAB=null; OPEN_COLAB=null; TAB='colaboradores'; render(); });
+  T('lista compacta com 18 colaboradores (sem fichas abertas)', await p.locator('.colabLinha').count()===18 && await p.locator('.togglecolab').count()===0);
+  await p.fill('#colabBusca','pessoa 1'); await p.waitForTimeout(100);
+  const vis=await p.evaluate(()=>[...document.querySelectorAll('.colabLinha')].filter(r=>r.style.display!=='none').length);
+  T('busca filtra a lista (Pessoa 1, 10..18 = 10)', vis===10, vis);
+  await p.fill('#colabBusca',''); await p.click('.colabLinha[data-u="u3"]'); await p.waitForTimeout(150);
+  T('clicar abre só um colaborador', await p.locator('.togglecolab').count()===1 && /Pessoa 4/.test(await p.innerText('.card h2')) && await p.locator('.colabLinha').count()===0);
+  await p.click('text=Próximo ›'); await p.waitForTimeout(150);
+  T('próximo abre o seguinte', /Pessoa 5/.test(await p.innerText('.card h2')));
+  await p.click('.colabVoltar'); await p.waitForTimeout(150);
+  T('voltar retorna à lista', await p.locator('.colabLinha').count()===18);
+  T('sem erros', errs.length===0, errs); console.log(ok+' ok, '+ko+' falhas'); await b.close(); process.exit(ko?1:0);
+})();

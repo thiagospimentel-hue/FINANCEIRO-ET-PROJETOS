@@ -7,7 +7,7 @@ const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwrig
   await p.evaluate(()=>{ SESSION={role:'admin'}; DATA.colaboradores=[{id:'u1',nome:'Renner',cargo:'C'}];
     const mk=(id,nome)=>({id,nomeObra:nome,codigo:id,status:'andamento',empresaId:'',cliente:{nome:'c'},servicos:[{id:'s'+id,tipoId:'t1',valorTotal:100000,imposto:0,despesas:[],aditivos:[]}],etapasPagamento:[],despesasObra:[],
       equipe:[{id:'q'+id,colaboradorId:'u1',papel:'Coord',pct:10,baseIds:[],etapas:etapasCoordPadrao()}]});
-    DATA.obras=[mk('o1','A'),mk('o2','B'),mk('o3','C')]; TAB='colaboradores'; render(); });
+    DATA.obras=[mk('o1','A'),mk('o2','B'),mk('o3','C')]; TAB='colaboradores'; SEL_COLAB='u1'; render(); });
   T('painel de média no card do colaborador', await p.locator('.mcOb').count()===3);
   await p.check('.mcOb[data-o="o1"]'); await p.waitForTimeout(100); await p.check('.mcOb[data-o="o3"]'); await p.waitForTimeout(100);
   await p.fill('.mcCfg[data-f="inicio"]','2026-11'); await p.press('.mcCfg[data-f="inicio"]','Tab'); await p.waitForTimeout(100);

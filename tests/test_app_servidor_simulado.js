@@ -172,7 +172,7 @@ const results=[]; const T=(nome,ok,det)=>{ results.push([ok,nome,det]); console.
   T('consulta remota antiga não desfaz o que acabou de ser salvo', await A.evaluate(()=>DATA.obras[0].codigo)==='GRAVADO-DURANTE-POLL' && S.docs['obras/o1'].data.codigo==='GRAVADO-DURANTE-POLL');
   // ---- convite: cadastro é salvo ANTES de o servidor validar o colaborador ----
   await A.evaluate(()=>{ TAB='colaboradores'; render(); }); await A.waitForTimeout(300);
-  await A.evaluate(()=>{ cvNome.value='Carlos Novo'; cvEmail.value='carlos@x.com'; cvCargo.value='Proj'; document.getElementById('cvEmailBtn').click(); }); await A.waitForTimeout(2500);
+  await A.evaluate(()=>{ SEL_COLAB=null; OPEN_COLAB=null; render(); }); await A.evaluate(()=>{ cvNome.value='Carlos Novo'; cvEmail.value='carlos@x.com'; cvCargo.value='Proj'; document.getElementById('cvEmailBtn').click(); }); await A.waitForTimeout(2500);
   T('convite por e-mail só dispara depois do cadastro estar salvo no servidor', (S.fn||[]).includes('convidar:carlos@x.com') && S.docs['cfg/main'].data.colaboradores.some(c=>c.nome==='Carlos Novo'), S.fn);
   const rejeita=await A.evaluate(async()=>{ try{ await sbAcesso('convidar','fantasma@x.com',{colaboradorId:'inexistente'}); return 'aceitou'; }catch(e){ return e.message; } });
   T('servidor recusa colaborador inexistente', /não encontrado/i.test(rejeita), rejeita);

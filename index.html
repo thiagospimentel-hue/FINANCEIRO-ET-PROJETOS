@@ -896,7 +896,7 @@ let SESSION={role:null,userId:null};
 let TAB='dashboard';
 let OPEN_OBRA=null;
 let FILTER_COLAB='';
-let OPEN_COLAB=null;
+let OPEN_COLAB=null, SEL_COLAB=null, COLAB_BUSCA='';
 let OPEN_EQUIPE={};
 let FILTER_CAIXA_OBRA='';
 let FILTER_CAIXA_COLAB='';
@@ -2045,7 +2045,7 @@ function faturamentoDashboardCard(){
     </div>
     <div style="overflow-x:auto;margin-top:8px;">
     <table><tr><th>Obra</th><th>Etapa</th><th class="num">Valor</th><th>Nº NF</th><th>Emissão NF</th><th>Vencimento</th><th style="text-align:center;">Situação</th></tr>
-    ${rows || '<tr><td colspan="8" class="small">Nenhuma etapa encontrada com esse filtro.</td></tr>'}
+    ${rows || '<tr><td colspan="7" class="small">Nenhuma etapa encontrada com esse filtro.</td></tr>'}
     </table>
     </div>
   </div>`;
@@ -2328,9 +2328,9 @@ function resumoView(){
   const STATUS_BADGE_RESUMO={pronto:'faturada',parcial:'concluida',pendente:'andamento'};
   const hoje=hojeISO();
   const obrasHtml=resumosPorObra.map(({obra,etapas})=>{
-    let totValor=0, totRec=0, totPagoMan=0;
+    let totValor=0, totRec=0;
     const rows=etapas.map(e=>{
-      totValor+=e.valor; totRec+=Math.min(e.recebido,e.valor); const pm=+(((obra.etapasPagamento||[])[e.idx]||{}).valorPagoManual)||0; totPagoMan+=pm;
+      totValor+=e.valor; totRec+=Math.min(e.recebido,e.valor);
       const situacao = e.status==='sem_entrega'
         ? '<span class="small">—</span>'
         : `<span class="badge badge-${STATUS_BADGE_RESUMO[e.status]}">${STATUS_LABEL_RESUMO[e.status]}${e.status==='parcial'?' ('+e.concluidos+'/'+e.totalDeliv+')':''}</span>`;
@@ -2342,7 +2342,6 @@ function resumoView(){
         <td><b>${esc(e.nome)}</b><div class="small">${e.aditivoId?'aditivo':pct(e.pct)} · ${situacao}</div></td>
         <td class="num">${fmt(e.valor)}${e.travado?' <span title="Valor congelado: já há NF emitida ou recebimento, então mudanças no contrato não alteram esta etapa">🔒</span>':''}${e.recebido>0.005?`<div class="small">recebido ${fmt(Math.min(e.recebido,e.valor))}</div>`:''}</td>
         <td class="num">${fmt(liqFonte(e.valor))}${e.recebido>0.005?`<div class="small">recebido ${fmt(liqFonte(Math.min(e.recebido,e.valor)))}</div>`:''}</td>
-        <td class="num"><input type="text" inputmode="decimal" class="val-input valPagoMan" data-o="${esc(obra.id)}" data-i="${e.idx}" value="${pm?pm.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}):''}" placeholder="0,00" style="width:110px;text-align:right;">${pm?`<div class="small ${pm>=liqFonte(e.valor)-0.005?'pos':'neg'}">dif. ${fmt(pm-liqFonte(e.valor))}</div>`:''}</td>
         <td><div class="row2"><input type="text" class="nfNumero" data-o="${esc(obra.id)}" data-i="${e.idx}" value="${e.nfNumero||''}" placeholder="nº da NF" style="width:90px;"><input type="text" inputmode="numeric" class="nfData dateBr" data-o="${esc(obra.id)}" data-i="${e.idx}" value="${isoToBr(e.nfData)}" placeholder="emissão" maxlength="10" style="width:105px;"></div></td>
         <td><div class="stk"><input type="text" inputmode="numeric" class="etapaVenc dateBr" data-o="${esc(obra.id)}" data-i="${e.idx}" value="${isoToBr(e.vencimento)}" placeholder="dd/mm/aaaa" maxlength="10" style="width:130px;${vencido?'border-color:var(--bad);color:var(--bad);':''}">${vencido&&!e.pago&&e.recebido<=0.005?'<span class="badge" style="background:var(--bad);color:#fff;width:fit-content;">Vencida</span>':''}</div></td>
         <td style="min-width:190px;">${formaCobrancaCell(obra,e)}</td>
@@ -2352,8 +2351,8 @@ function resumoView(){
     return `<div class="card">
       <h2>🏗️ ${esc(obra.nomeObra)} <span class="small">${obra.codigo?'· '+obra.codigo:''}</span></h2>
       <div style="overflow-x:auto;">
-      <table class="cobtab"><tr><th>Etapa</th><th class="num">Valor bruto</th><th class="num" title="Valor bruto menos 6,15% de imposto retido na fonte">Líquido (−6,15%)</th><th class="num" title="Digite manualmente o valor que de fato entrou (líquido do banco)">Valor pago (manual)</th><th>Nota fiscal</th><th>Vencimento</th><th>Forma de cobrança</th><th>Recebimento</th></tr>${rows || '<tr><td colspan="6" class="small">Nenhuma etapa de pagamento cadastrada nesta obra.</td></tr>'}
-      <tr class="hdr"><td>Total</td><td class="num">${fmt(totValor)}</td><td class="num">${fmt(liqFonte(totValor))}</td><td class="num">${fmt(totPagoMan)}</td><td colspan="2" class="num">Recebido: ${fmt(totRec)}<div class="small">líquido ${fmt(liqFonte(totRec))}</div></td><td colspan="2" class="num">A receber: ${fmt(Math.max(0,totValor-totRec))}<div class="small">líquido ${fmt(liqFonte(Math.max(0,totValor-totRec)))}</div></td></tr></table>
+      <table class="cobtab"><tr><th>Etapa</th><th class="num">Valor bruto</th><th class="num" title="Valor bruto menos 6,15% de imposto retido na fonte">Líquido (−6,15%)</th><th>Nota fiscal</th><th>Vencimento</th><th>Forma de cobrança</th><th>Recebimento</th></tr>${rows || '<tr><td colspan="7" class="small">Nenhuma etapa de pagamento cadastrada nesta obra.</td></tr>'}
+      <tr class="hdr"><td>Total</td><td class="num">${fmt(totValor)}</td><td class="num">${fmt(liqFonte(totValor))}</td><td colspan="2" class="num">Recebido: ${fmt(totRec)}<div class="small">líquido ${fmt(liqFonte(totRec))}</div></td><td colspan="2" class="num">A receber: ${fmt(Math.max(0,totValor-totRec))}<div class="small">líquido ${fmt(liqFonte(Math.max(0,totValor-totRec)))}</div></td></tr></table>
       </div>
     </div>`;
   }).join('');
@@ -2853,7 +2852,8 @@ function colaboradoresView(){
       </div>
       <button class="btn danger delempresa" data-e="${esc(e.id)}" style="margin-left:8px;">x</button>
     </div>`).join('') || '<p class="small">Nenhuma empresa cadastrada ainda.</p>';
-  const rows=DATA.colaboradores.map(u=>{
+  const selC=SEL_COLAB||OPEN_COLAB; if(selC&&!DATA.colaboradores.some(x=>x.id===selC)){ SEL_COLAB=null; OPEN_COLAB=null; }
+  const rows=DATA.colaboradores.filter(u=>u.id===(SEL_COLAB||OPEN_COLAB)).map(u=>{
     const {total,aprovado,pago,saldo,linhas}=pagamentosDoColaborador(u.id);
     const linhasHtml=linhas.map(l=>{
       const aprov = l.tipo==='despesa' ? '<span class="small">despesa da obra</span>' : l.auto ? '<span class="small">✔ automática (média)</span>' : l.concluido
@@ -2942,15 +2942,24 @@ function colaboradoresView(){
         <span class="small">Saldo a pagar: <b class="${saldo>0.005?'neg':''}">${fmt(saldo)}</b></span>
       </div></div>`;
   }).join('');
-  return `${conviteBox()}${convidarCard()}<div class="card"><h2>Minhas empresas (CNPJ)</h2>
+  const lista=DATA.colaboradores.map(u=>{ const q=pagamentosDoColaborador(u.id); const temMedia=DATA.obras.some(o=>(o.equipe||[]).some(m=>m.colaboradorId===u.id&&m.modelo==='media'&&!m.inativo));
+    return `<tr class="colabLinha" data-u="${esc(u.id)}" data-q="${esc(((u.nome||'')+' '+(u.cargo||'')).toLowerCase())}" style="cursor:pointer;"><td><b>${esc(u.nome)}</b>${u.cargo?`<div class="small">${esc(u.cargo)}</div>`:''}</td><td class="small">${docTipoColab(u)==='recibo'?'recibo (associado)':'NF'}${temMedia?' · média':''}</td><td class="num">${fmt(q.total)}</td><td class="num">${fmt(q.aprovado)}</td><td class="num pos">${fmt(q.pago)}</td><td class="num ${q.saldo>0.005?'neg':''}"><b>${fmt(q.saldo)}</b></td><td><button class="btn secondary abrirColab" data-u="${esc(u.id)}">Abrir</button></td></tr>`; }).join('');
+  const listaCard=`<div class="card"><div class="row-flex" style="justify-content:space-between;flex-wrap:wrap;gap:8px;"><h2 style="margin:0;">Colaboradores <span class="small">(${DATA.colaboradores.length})</span></h2>
+      <input type="text" id="colabBusca" placeholder="Buscar colaborador…" value="${esc(COLAB_BUSCA)}" style="max-width:260px;"></div>
+    <div style="overflow-x:auto;"><table style="margin-top:8px;"><tr><th>Colaborador</th><th>Pagamento</th><th class="num">Contratado</th><th class="num">Aprovado</th><th class="num">Pago</th><th class="num">Saldo a pagar</th><th></th></tr>${lista||'<tr><td colspan="7" class="small">Nenhum colaborador cadastrado.</td></tr>'}</table></div>
+    <p class="small" style="margin-top:6px;">Clique em um colaborador para abrir apenas a ficha dele.</p></div>`;
+  const idxSel=DATA.colaboradores.findIndex(x=>x.id===(SEL_COLAB||OPEN_COLAB));
+  if(idxSel>=0){ const ant=DATA.colaboradores[idxSel-1], prox=DATA.colaboradores[idxSel+1];
+    return `<div class="row-flex" style="justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px;"><button class="btn secondary colabVoltar">← Voltar à lista (${DATA.colaboradores.length})</button>
+      <div class="row-flex" style="gap:6px;"><button class="btn secondary abrirColab" ${ant?`data-u="${esc(ant.id)}" title="${esc(ant.nome)}"`:'disabled'}>‹ Anterior</button><span class="small">${idxSel+1} de ${DATA.colaboradores.length}</span><button class="btn secondary abrirColab" ${prox?`data-u="${esc(prox.id)}" title="${esc(prox.nome)}"`:'disabled'}>Próximo ›</button></div></div>${rows}`; }
+  return `${conviteBox()}${convidarCard()}${listaCard}<div class="card"><h2>Minhas empresas (CNPJ)</h2>
       <p class="small">Cadastre seus CNPJs — na tela da obra você seleciona qual deles é a empresa contratada (para futuramente separar o faturamento por empresa).</p>
       ${empresasRows}
       <button class="btn secondary" id="addEmpresa" style="margin-top:10px;">+ Nova empresa</button>
     </div>
     <div class="card"><h2>Tipos de serviço (catálogo)</h2><div>${tiposRows}</div>
       <div class="row-flex" style="margin-top:8px;"><input type="text" id="novoTipo" placeholder="Novo tipo de serviço"><button class="btn secondary" id="addTipo">Adicionar</button></div></div>
-    ${rows}
-    <div class="card"><h2>Cadastrar novo colaborador</h2>
+        <div class="card"><h2>Cadastrar novo colaborador</h2>
       <div class="grid2">
         <div class="field"><label>Nome</label><input type="text" id="novoNome" placeholder="Nome completo"></div>
         <div class="field"><label>Cargo / função</label><input type="text" id="novoCargo" placeholder="Ex: Projetista Elétrico"></div>
@@ -3505,7 +3514,6 @@ function attachMain(){
   if(TAB==='resumo' && SESSION.role==='admin'){
     document.querySelectorAll('.nfNumero').forEach(i=>i.onchange=e=>{const obra=DATA.obras.find(o=>o.id===i.dataset.o); if(!obra)return; const et=obra.etapasPagamento[i.dataset.i]; if(!et)return; et.nfNumero=e.target.value; sincEtapaContrato(obra,et); save(DATA);});
 
-    document.querySelectorAll('.valPagoMan').forEach(i=>i.onchange=e=>{ const o=DATA.obras.find(x=>x.id===i.dataset.o); const et=o&&o.etapasPagamento[i.dataset.i]; if(!et) return; const v=parseBRL(e.target.value); if(v>0) et.valorPagoManual=Math.round(v*100)/100; else delete et.valorPagoManual; save(DATA); setTimeout(render,0); });
     document.querySelectorAll('.etForma').forEach(i=>i.onchange=e=>{ const o=DATA.obras.find(x=>x.id===i.dataset.o); const et=o&&o.etapasPagamento[i.dataset.i]; if(!et) return; et.formaPgto=e.target.value; if(!et.formaPgto) delete et.formaPgto; else if(!et.contaId){ const cs=contasDaEmpresa(o.empresaId); if(cs.length) et.contaId=cs[0].id; } sincContasCaixa(); save(DATA); setTimeout(render,0); });
     document.querySelectorAll('.etConta').forEach(i=>i.onchange=e=>{ const o=DATA.obras.find(x=>x.id===i.dataset.o); const et=o&&o.etapasPagamento[i.dataset.i]; if(!et) return; et.contaId=e.target.value; if(!et.contaId) delete et.contaId; sincContasCaixa(); save(DATA); setTimeout(render,0); });
     // Campos de data digitados (dd/mm/aaaa): aplica máscara enquanto digita e converte p/ ISO ao sair do campo.
@@ -3776,6 +3784,10 @@ function attachMain(){
       if(r.bloq) alert(r.bloq+' vínculo(s) já têm aprovação ou pagamento e não foram alterados.');
       save(DATA); setTimeout(render,0);
     });
+    document.querySelectorAll('.abrirColab').forEach(b=>b.onclick=e=>{ e.stopPropagation(); if(!b.dataset.u) return; SEL_COLAB=b.dataset.u; OPEN_COLAB=null; render(); window.scrollTo(0,0); });
+    document.querySelectorAll('.colabLinha').forEach(tr=>tr.onclick=()=>{ SEL_COLAB=tr.dataset.u; OPEN_COLAB=null; render(); window.scrollTo(0,0); });
+    document.querySelectorAll('.colabVoltar').forEach(b=>b.onclick=()=>{ SEL_COLAB=null; OPEN_COLAB=null; render(); window.scrollTo(0,0); });
+    const cb=document.getElementById('colabBusca'); if(cb) cb.oninput=()=>{ COLAB_BUSCA=cb.value; const q=cb.value.toLowerCase().trim(); document.querySelectorAll('.colabLinha').forEach(tr=>{ tr.style.display=!q||tr.dataset.q.includes(q)?'':'none'; }); };
     document.querySelectorAll('.togglecolab').forEach(b=>b.onclick=()=>{OPEN_COLAB=OPEN_COLAB===b.dataset.u?null:b.dataset.u;render();});
     document.querySelectorAll('.gerarrecibo').forEach(b=>b.onclick=()=>{ abrirReciboColaborador(b.dataset.u, b.dataset.mes, b.dataset.e); });
     document.querySelectorAll('.gerarnf').forEach(b=>b.onclick=()=>{ abrirSolicitacaoNF(b.dataset.u, b.dataset.mes, b.dataset.e); });
@@ -3791,7 +3803,7 @@ function attachMain(){
       PENDING_DEL=''; DATA.colaboradores=DATA.colaboradores.filter(x=>x.id!==id); logAcao('Colaborador removido: '+u.nome); save(DATA); render();
     });
     document.querySelectorAll('.deltipo').forEach(b=>b.onclick=()=>{if(tipoEmUso(b.dataset.t)) return; DATA.tiposServico=DATA.tiposServico.filter(t=>t.id!==b.dataset.t);save(DATA);render();});
-    document.getElementById('addTipo').onclick=()=>{
+    const addTipoB=document.getElementById('addTipo'); if(addTipoB) addTipoB.onclick=()=>{
       const nome=document.getElementById('novoTipo').value.trim(); if(!nome) return;
       DATA.tiposServico.push({id:'t'+Date.now(),nome}); save(DATA); render();
     };
@@ -3805,7 +3817,7 @@ function attachMain(){
       DATA.minhasEmpresas.push({id:'emp'+Date.now(),nome:'Nova empresa',cnpj:'',endereco:'',telefone:'',email:''});
       save(DATA); render();
     };
-    document.getElementById('addColab').onclick=()=>{
+    const addColabB=document.getElementById('addColab'); if(addColabB) addColabB.onclick=()=>{
       const nome=document.getElementById('novoNome').value.trim(); if(!nome) return;
       DATA.colaboradores.push({
         id:'u'+Date.now(), nome,
