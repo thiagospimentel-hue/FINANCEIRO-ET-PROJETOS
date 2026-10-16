@@ -1046,7 +1046,7 @@ function logAcao(txt){
   if(DATA.historico.length>300) DATA.historico.length=300;
 }
 const BX_ULT={};
-function lancarBaixa(item,{valor,data,tipo,desc,obraId,colaboradorId,origem,empresaId}){
+function lancarBaixa(item,{valor,data,tipo,desc,obraId,colaboradorId,origem,empresaId,contaId}){
   valor=r2(valor);
   if(!(valor>0)) return null;                                   // nunca lança valor zero ou negativo
   const chave=(origem&&origem.refId||item.id||'')+'|'+valor+'|'+data, agora=Date.now();
@@ -1055,6 +1055,7 @@ function lancarBaixa(item,{valor,data,tipo,desc,obraId,colaboradorId,origem,empr
   const movId=novoId('m');
   const mv={id:movId,data,desc,tipo,valor,obraId:obraId||'',colaboradorId:colaboradorId||'',origem,criadoPor:quemFez(),criadoEm:new Date().toISOString()};
   if(!obraId && empresaId) mv.empresaId=empresaId;
+  if(contaId) mv.contaId=contaId;
   DATA.caixa.push(mv);                                          // baixa e caixa nascem juntas e são gravadas no mesmo lote (transação)
   item.baixas=item.baixas||[];
   item.baixas.push({id:novoId('b'),data,valor,movId,por:quemFez()});
@@ -1076,6 +1077,7 @@ function desfazerBaixa(item,baixaId,motivo){
   if(mv){
     const rev={id:novoId('m'),data:hojeISO(),desc:'Estorno — '+(mv.desc||''),tipo:mv.tipo==='entrada'?'saida':'entrada',valor:mv.valor,obraId:mv.obraId||'',colaboradorId:mv.colaboradorId||'',origem:Object.assign({},mv.origem||{},{estorno:true}),estornoDe:mv.id,motivo,criadoPor:quemFez(),criadoEm:new Date().toISOString()};
     if(mv.empresaId) rev.empresaId=mv.empresaId;
+    if(mv.contaId) rev.contaId=mv.contaId;
     DATA.caixa.push(rev); est.estornoMovId=rev.id;
   }
   item.baixas=item.baixas.filter(x=>x.id!==baixaId);
@@ -1304,6 +1306,7 @@ function attachBaixas(){
     if(k==='etapa'){
       const v=valorEtapaContrato(r.obra,r.item); saldo=v-baixaTotal(r.item);
       base={tipo:'entrada',desc:'Recebimento — '+r.obra.nomeObra+' — '+r.item.nome+(r.item.nfNumero?' (NF '+r.item.nfNumero+')':''),obraId:r.obra.id,origem:{tipo:'etapa',obraId:r.obra.id,refId:r.item.id}};
+      if(r.item.contaId && acharConta(r.item.contaId)) base.contaId=r.item.contaId;
     } else if(k==='equipe'){
       const v=valorEquipeEtapa(r.obra,r.m,r.item); if(!r.item.aprovado) return;
       if(!temValor(r.item.valorFixo)) r.item.valorFixo=v;
@@ -2085,6 +2088,46 @@ function obrasView(){
   return filterBar() + cards+`<button class="btn" id="addobra">+ Nova obra</button>`+(docPodeUsar()?` <label class="btn secondary" style="cursor:pointer;display:inline-block;">+ Nova obra a partir do contrato (PDF)<input type="file" id="importCt" accept="application/pdf" style="display:none;"></label>`:'');
 }
 
+
+// ===== Contas bancárias das empresas e forma de cobrança (depósito / boleto) =====
+const TIPOS_CONTA=['Conta corrente','Poupança','Conta pagamento'];
+function contasDaEmpresa(empId){ const e=(DATA.minhasEmpresas||[]).find(x=>x.id===empId); return (e&&e.contas)||[]; }
+function contaRotulo(c){ return [c.apelido||c.banco||'Conta', c.banco&&c.apelido?c.banco:'', c.agencia?'ag. '+c.agencia:'', c.conta?'c/ '+c.conta:''].filter(Boolean).join(' · '); }
+function acharConta(contaId){ for(const e of (DATA.minhasEmpresas||[])){ const c=(e.contas||[]).find(x=>x.id===contaId); if(c) return {emp:e,conta:c}; } return null; }
+const FORMA_LABEL={deposito:'Depósito / transferência',boleto:'Boleto bancário'};
+function textoCobranca(obra,e){
+  const emp=(DATA.minhasEmpresas||[]).find(x=>x.id===obra.empresaId)||{};
+  const et=(obra.etapasPagamento||[])[e.idx]||e;
+  const valor=valorEtapaContrato(obra,et)-baixaTotal(et);
+  const L=['COBRANÇA — '+(emp.nome||'')+(emp.cnpj?' (CNPJ '+emp.cnpj+')':''),
+    'Obra: '+obra.nomeObra+(obra.codigo?' ('+obra.codigo+')':''),
+    'Cliente: '+((obra.cliente||{}).nome||'—')+((obra.cliente||{}).documento?' — '+obra.cliente.documento:''),
+    'Referente a: '+et.nome+(et.nfNumero?' — NF nº '+et.nfNumero+(et.nfData?' emitida em '+isoToBr(et.nfData):''):''),
+    'Valor: '+fmt(valor),
+    'Vencimento: '+(et.vencimento?isoToBr(et.vencimento):'a combinar'),''];
+  if(et.formaPgto==='boleto'){
+    L.push('Forma de pagamento: BOLETO BANCÁRIO','O boleto será enviado ao cliente com o vencimento acima.');
+    const ac=acharConta(et.contaId); if(ac) L.push('Conta de recebimento: '+contaRotulo(ac.conta));
+  } else if(et.formaPgto==='deposito'){
+    const ac=acharConta(et.contaId);
+    L.push('Forma de pagamento: DEPÓSITO / TRANSFERÊNCIA BANCÁRIA');
+    if(ac){ const c=ac.conta; L.push('Banco: '+(c.banco||'—'),'Agência: '+(c.agencia||'—'),(c.tipo||'Conta')+': '+(c.conta||'—'),'Titular: '+(ac.emp.nome||'—'),'CNPJ: '+(ac.emp.cnpj||'—')); if(c.pix) L.push('PIX: '+c.pix); }
+    else L.push('(escolha a conta de recebimento)');
+    L.push('','Após o pagamento, enviar o comprovante para '+(emp.email||'o financeiro')+'.');
+  } else L.push('Forma de pagamento: a definir (depósito ou boleto).');
+  return L.join('\n');
+}
+function abrirCobranca(obraId,idx){
+  const obra=DATA.obras.find(o=>o.id===obraId); if(!obra) return;
+  const e=resumoEtapasObra(obra).find(x=>x.idx===+idx); if(!e) return;
+  if(document.getElementById('cobModal')) return;
+  const d=document.createElement('div'); d.id='cobModal'; d.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9000;display:flex;align-items:center;justify-content:center;padding:16px;';
+  d.innerHTML='<div style="background:#fff;color:#222;width:100%;max-width:560px;border-radius:10px;padding:20px;font:14px/1.45 system-ui,sans-serif;"><h3 style="margin:0 0 8px;">Dados para cobrança</h3><textarea id="cobTxt" readonly rows="14" style="width:100%;font:13px/1.4 ui-monospace,monospace;"></textarea><div style="display:flex;gap:8px;margin-top:10px;"><button class="btn" id="cobCopiar">Copiar</button><button class="btn secondary" id="cobFechar">Fechar</button><span class="small" id="cobMsg"></span></div></div>';
+  document.body.appendChild(d);
+  const ta=d.querySelector('#cobTxt'); ta.value=textoCobranca(obra,e);
+  d.querySelector('#cobFechar').onclick=()=>d.remove();
+  d.querySelector('#cobCopiar').onclick=async()=>{ try{ await navigator.clipboard.writeText(ta.value); d.querySelector('#cobMsg').textContent='Copiado!'; }catch(err){ ta.select(); d.querySelector('#cobMsg').textContent='Selecione e copie (Ctrl+C).'; } };
+}
 function baixaWidget(kind,a,b,c,saldo,baixas,label){
   const ref=`data-k="${esc(kind)}" data-a="${esc(a)}" data-b="${esc(b)}" data-c="${esc(c)}"`;
   const lista=(baixas||[]).map(x=>`<div class="small" style="white-space:nowrap;">${x.data?isoToBr(x.data):'s/ data'} · ${fmt(x.valor)}${x.semCaixa?' <span title="Registrado antes da integração com o caixa">(sem caixa)</span>':''} <button class="btn danger bxDel" ${ref} data-bx="${esc(x.id)}" style="padding:0 5px;" title="Desfazer esta baixa e o lançamento no caixa">x</button></div>`).join('');
@@ -2095,6 +2138,17 @@ function baixaWidget(kind,a,b,c,saldo,baixas,label){
   return lista+form;
 }
 
+function formaCobrancaCell(obra,e){
+  const et=(obra.etapasPagamento||[])[e.idx]||{}; const contas=contasDaEmpresa(obra.empresaId);
+  const ref=`data-o="${esc(obra.id)}" data-i="${e.idx}"`;
+  const sel=`<select class="etForma" ${ref}><option value="">— forma —</option><option value="deposito" ${et.formaPgto==='deposito'?'selected':''}>Depósito / transferência</option><option value="boleto" ${et.formaPgto==='boleto'?'selected':''}>Boleto</option></select>`;
+  let conta='';
+  if(et.formaPgto){
+    conta=contas.length ? `<select class="etConta" ${ref} style="margin-top:3px;"><option value="">— conta de recebimento —</option>${contas.map(c=>`<option value="${esc(c.id)}" ${c.id===et.contaId?'selected':''}>${esc(contaRotulo(c))}</option>`).join('')}</select>`
+      : `<div class="small neg" style="margin-top:3px;">${obra.empresaId?'Cadastre as contas da empresa em Colaboradores.':'Defina a empresa da obra.'}</div>`;
+  }
+  return sel+conta+`<div style="margin-top:3px;"><button class="btn secondary etCob" ${ref}>Dados p/ cobrança</button></div>`;
+}
 function resumoView(){
   const resumosPorObra=obrasVisiveis().map(obra=>({obra, etapas:resumoEtapasObra(obra), valorTotalObra:calcObra(obra).valorTotal}));
   const prontas=[];
@@ -2132,14 +2186,15 @@ function resumoView(){
         <td><input type="text" class="nfNumero" data-o="${esc(obra.id)}" data-i="${e.idx}" value="${e.nfNumero||''}" placeholder="nº da NF" style="width:90px;"></td>
         <td><input type="text" inputmode="numeric" class="nfData dateBr" data-o="${esc(obra.id)}" data-i="${e.idx}" value="${isoToBr(e.nfData)}" placeholder="dd/mm/aaaa" maxlength="10" style="width:110px;"></td>
         <td><input type="text" inputmode="numeric" class="etapaVenc dateBr" data-o="${esc(obra.id)}" data-i="${e.idx}" value="${isoToBr(e.vencimento)}" placeholder="dd/mm/aaaa" maxlength="10" style="width:110px;${vencido?'border-color:var(--bad);color:var(--bad);':''}"></td>
+        <td style="min-width:200px;">${formaCobrancaCell(obra,e)}</td>
         <td style="min-width:250px;">${recBadge}${baixaWidget('etapa',obra.id,e.idx,'',e.saldo,e.baixas,'Receber')}</td>
       </tr>`;
     }).join('');
     return `<div class="card">
       <h2>🏗️ ${esc(obra.nomeObra)} <span class="small">${obra.codigo?'· '+obra.codigo:''}</span></h2>
       <div style="overflow-x:auto;">
-      <table><tr><th>Etapa do contrato</th><th class="num">%</th><th class="num">Valor</th><th style="text-align:center;">Entrega dos colaboradores</th><th>Nº NF</th><th>Emissão NF</th><th>Vencimento</th><th>Recebimento</th></tr>${rows || '<tr><td colspan="8" class="small">Nenhuma etapa de pagamento cadastrada nesta obra.</td></tr>'}
-      <tr class="hdr"><td>Total</td><td></td><td class="num">${fmt(totValor)}</td><td colspan="3" class="num">Recebido: ${fmt(totRec)}</td><td colspan="2" class="num">A receber: ${fmt(Math.max(0,totValor-totRec))}</td></tr></table>
+      <table><tr><th>Etapa do contrato</th><th class="num">%</th><th class="num">Valor</th><th style="text-align:center;">Entrega dos colaboradores</th><th>Nº NF</th><th>Emissão NF</th><th>Vencimento</th><th>Forma de cobrança</th><th>Recebimento</th></tr>${rows || '<tr><td colspan="9" class="small">Nenhuma etapa de pagamento cadastrada nesta obra.</td></tr>'}
+      <tr class="hdr"><td>Total</td><td></td><td class="num">${fmt(totValor)}</td><td colspan="3" class="num">Recebido: ${fmt(totRec)}</td><td colspan="3" class="num">A receber: ${fmt(Math.max(0,totValor-totRec))}</td></tr></table>
       </div>
     </div>`;
   }).join('');
@@ -2478,6 +2533,17 @@ function conferenciaCard(){
     <p class="small">Estas baixas foram registradas antes da integração com o caixa e não têm lançamento. Se o valor já está no caixa como lançamento manual, vincule para não duplicar; se não está, mantenha sem caixa.</p>
     <table><tr><th>Baixa</th><th>Data</th><th class="num">Valor</th><th></th></tr>${rows}</table></div>`;
 }
+function contasCaixaCard(){
+  const linhas=[];
+  (DATA.minhasEmpresas||[]).forEach(e=>(e.contas||[]).forEach(c=>{
+    let ent=0,sai=0; DATA.caixa.filter(movVisivel).forEach(m=>{ if(m.contaId!==c.id) return; if(m.tipo==='entrada') ent+=m.valor; else sai+=m.valor; });
+    linhas.push(`<tr><td>${esc(e.nome)}</td><td>${esc(contaRotulo(c))}</td><td class="num pos">${fmt(ent)}</td><td class="num neg">${fmt(sai)}</td><td class="num"><b>${fmt(ent-sai)}</b></td></tr>`);
+  }));
+  if(!linhas.length) return '';
+  const sem=DATA.caixa.filter(movVisivel).filter(m=>!m.contaId).length;
+  return `<div class="card"><h2>Movimento por conta bancária</h2><table><tr><th>Empresa</th><th>Conta</th><th class="num">Entradas</th><th class="num">Saídas</th><th class="num">Saldo movimentado</th></tr>${linhas.join('')}</table>
+    <p class="small">Soma só os lançamentos com conta informada (${sem} lançamento(s) sem conta não entram). O recebimento de uma cobrança já usa a conta escolhida em "Resumo p/ Cobrança".</p></div>`;
+}
 function caixaView(){
   let lista=DATA.caixa.filter(movVisivel);
   if(FILTER_CAIXA_OBRA) lista=lista.filter(m=>m.obraId===FILTER_CAIXA_OBRA);
@@ -2488,18 +2554,20 @@ function caixaView(){
     return `<tr>
       <td>${new Date(m.data+'T00:00').toLocaleDateString('pt-BR')}</td><td>${esc(m.desc)}</td>
       <td class="small">${esc(obraNome)}</td><td class="small">${esc(colNome)}</td>
+      <td class="small">${m.contaId&&acharConta(m.contaId)?esc(contaRotulo(acharConta(m.contaId).conta)):'—'}</td>
       <td class="num ${m.tipo==='entrada'?'pos':'neg'}">${m.tipo==='entrada'?'+':'-'} ${fmt(m.valor)}</td>
       <td>${m.origem?'<span title="Lançamento gerado por uma baixa. Para desfazer, use a tela de origem (Resumo p/ Cobrança, Colaboradores ou Contas a pagar).">🔗</span>':`<button class="btn danger delmov" data-id="${esc(m.id)}">x</button>`}</td></tr>`;
   }).join('');
   const saldoFiltrado=lista.reduce((s,m)=>s+(m.tipo==='entrada'?m.valor:-m.valor),0);
   const saldoGeral=DATA.caixa.reduce((s,m)=>s+(m.tipo==='entrada'?m.valor:-m.valor),0);
-  return conferenciaCard()+`<div class="card"><h2>Novo lançamento</h2><div class="row-flex">
+  return conferenciaCard()+contasCaixaCard()+`<div class="card"><h2>Novo lançamento</h2><div class="row-flex">
       <input type="date" id="movData" value="${new Date().toISOString().slice(0,10)}">
       <input type="text" id="movDesc" placeholder="Descrição">
       <select id="movTipo"><option value="entrada">Entrada</option><option value="saida">Saída</option></select>
       <span class="small">R$</span> <input type="text" inputmode="decimal" id="movValor" placeholder="0,00" class="val-input">
       <select id="movObra"><option value="">— sem obra —</option>${obraOptions('')}</select>
       <select id="movColab"><option value="">— sem colaborador —</option>${colabOptions('')}</select>
+      <select id="movConta" title="Conta bancária (opcional)"><option value="">— conta —</option>${(DATA.minhasEmpresas||[]).flatMap(e=>(e.contas||[]).map(c=>`<option value="${esc(c.id)}">${esc(e.nome)} — ${esc(contaRotulo(c))}</option>`)).join('')}</select>
       <select id="movEmpresa" title="Empresa (usada quando o lançamento não tem obra)"><option value="">— empresa —</option>${DATA.minhasEmpresas.map(e=>`<option value="${esc(e.id)}" ${FILTER_EMPRESA===e.id?'selected':''}>${esc(e.nome)}</option>`).join('')}</select>
       <button class="btn" id="addMov">Adicionar</button></div></div>
     <div class="card">
@@ -2513,7 +2581,7 @@ function caixaView(){
         <h2 style="margin:0;">Saldo ${FILTER_CAIXA_OBRA||FILTER_CAIXA_COLAB||FILTER_EMPRESA?'(filtrado)':''}: <span class="${saldoFiltrado>=0?'pos':'neg'}">${fmt(saldoFiltrado)}</span></h2>
       </div>
       ${(FILTER_CAIXA_OBRA||FILTER_CAIXA_COLAB||FILTER_EMPRESA)?`<p class="small">Saldo geral (sem filtro): ${fmt(saldoGeral)}</p>`:''}
-      <table><tr><th>Data</th><th>Descrição</th><th>Obra</th><th>Colaborador</th><th class="num">Valor</th><th></th></tr>${rows}</table>
+      <table><tr><th>Data</th><th>Descrição</th><th>Obra</th><th>Colaborador</th><th>Conta</th><th class="num">Valor</th><th></th></tr>${rows}</table>
     </div>
     <div class="card"><h2>Histórico de ações</h2>
       ${(DATA.historico||[]).slice(0,30).map(h=>`<div class="small" style="padding:3px 0;border-bottom:1px solid var(--border);">${new Date(h.quando).toLocaleString('pt-BR')} — ${esc(h.txt)}</div>`).join('') || '<p class="small">Nenhuma ação registrada ainda.</p>'}
@@ -2575,6 +2643,17 @@ function colaboradoresView(){
         <div class="field"><label>Endereço</label><input type="text" class="empresaCampo" data-e="${esc(e.id)}" data-f="endereco" value="${esc(e.endereco||'')}"></div>
         <div class="field"><label>Telefone</label><input type="text" class="empresaCampo" data-e="${esc(e.id)}" data-f="telefone" value="${esc(e.telefone||'')}"></div>
         <div class="field"><label>E-mail</label><input type="text" class="empresaCampo" data-e="${esc(e.id)}" data-f="email" value="${esc(e.email||'')}"></div>
+        <div style="grid-column:1/-1;"><b class="small">Contas bancárias (para depósito / boleto)</b>
+          ${(e.contas||[]).map(c=>`<div class="row-flex" style="flex-wrap:wrap;gap:6px;margin-top:6px;">
+            <input type="text" class="ebCampo" data-e="${esc(e.id)}" data-c="${esc(c.id)}" data-f="apelido" value="${esc(c.apelido||'')}" placeholder="Apelido (ex.: Itaú principal)" style="width:150px;">
+            <input type="text" class="ebCampo" data-e="${esc(e.id)}" data-c="${esc(c.id)}" data-f="banco" value="${esc(c.banco||'')}" placeholder="Banco" style="width:120px;">
+            <input type="text" class="ebCampo" data-e="${esc(e.id)}" data-c="${esc(c.id)}" data-f="agencia" value="${esc(c.agencia||'')}" placeholder="Agência" style="width:80px;">
+            <input type="text" class="ebCampo" data-e="${esc(e.id)}" data-c="${esc(c.id)}" data-f="conta" value="${esc(c.conta||'')}" placeholder="Conta com dígito" style="width:120px;">
+            <select class="ebCampo" data-e="${esc(e.id)}" data-c="${esc(c.id)}" data-f="tipo">${TIPOS_CONTA.map(t=>`<option ${t===(c.tipo||TIPOS_CONTA[0])?'selected':''}>${t}</option>`).join('')}</select>
+            <input type="text" class="ebCampo" data-e="${esc(e.id)}" data-c="${esc(c.id)}" data-f="pix" value="${esc(c.pix||'')}" placeholder="Chave PIX (opcional)" style="width:150px;">
+            <button class="btn danger ebDel" data-e="${esc(e.id)}" data-c="${esc(c.id)}">x</button></div>`).join('')||'<p class="small" style="margin:4px 0;">Nenhuma conta cadastrada.</p>'}
+          <button class="btn secondary ebAdd" data-e="${esc(e.id)}" style="margin-top:6px;">+ conta bancária</button>
+        </div>
       </div>
       <button class="btn danger delempresa" data-e="${esc(e.id)}" style="margin-left:8px;">x</button>
     </div>`).join('') || '<p class="small">Nenhuma empresa cadastrada ainda.</p>';
@@ -3196,6 +3275,9 @@ function attachMain(){
   if(TAB==='resumo' && SESSION.role==='admin'){
     document.querySelectorAll('.nfNumero').forEach(i=>i.onchange=e=>{const obra=DATA.obras.find(o=>o.id===i.dataset.o); if(!obra)return; const et=obra.etapasPagamento[i.dataset.i]; if(!et)return; et.nfNumero=e.target.value; sincEtapaContrato(obra,et); save(DATA);});
 
+    document.querySelectorAll('.etForma').forEach(i=>i.onchange=e=>{ const o=DATA.obras.find(x=>x.id===i.dataset.o); const et=o&&o.etapasPagamento[i.dataset.i]; if(!et) return; et.formaPgto=e.target.value; if(!et.formaPgto) delete et.formaPgto; else if(!et.contaId){ const cs=contasDaEmpresa(o.empresaId); if(cs.length) et.contaId=cs[0].id; } save(DATA); setTimeout(render,0); });
+    document.querySelectorAll('.etConta').forEach(i=>i.onchange=e=>{ const o=DATA.obras.find(x=>x.id===i.dataset.o); const et=o&&o.etapasPagamento[i.dataset.i]; if(!et) return; et.contaId=e.target.value; if(!et.contaId) delete et.contaId; save(DATA); setTimeout(render,0); });
+    document.querySelectorAll('.etCob').forEach(b=>b.onclick=()=>abrirCobranca(b.dataset.o,b.dataset.i));
     // Campos de data digitados (dd/mm/aaaa): aplica máscara enquanto digita e converte p/ ISO ao sair do campo.
     document.querySelectorAll('.dateBr').forEach(i=>i.oninput=()=>maskDateBr(i));
     document.querySelectorAll('.nfData').forEach(i=>i.onchange=e=>{
@@ -3357,7 +3439,7 @@ function attachMain(){
       const desc=document.getElementById('movDesc').value.trim();
       const valor=parseBRL(document.getElementById('movValor').value);
       if(!desc||!valor) return;
-      DATA.caixa.push({id:'m'+Date.now(),data:document.getElementById('movData').value,desc,tipo:document.getElementById('movTipo').value,valor,obraId:document.getElementById('movObra').value,colaboradorId:document.getElementById('movColab').value,empresaId:document.getElementById('movEmpresa').value});
+      DATA.caixa.push({id:'m'+Date.now(),data:document.getElementById('movData').value,desc,tipo:document.getElementById('movTipo').value,valor,obraId:document.getElementById('movObra').value,colaboradorId:document.getElementById('movColab').value,empresaId:document.getElementById('movEmpresa').value,contaId:document.getElementById('movConta').value||undefined});
       save(DATA); render();
     };
     const achaBx=id=>{ for(const o of DATA.obras){ for(const e of (o.etapasPagamento||[])) for(const b of (e.baixas||[])) if(b.id===id) return b; for(const m of (o.equipe||[])) for(const e of (m.etapas||[])) for(const b of (e.baixas||[])) if(b.id===id) return b; } return null; };
@@ -3462,6 +3544,9 @@ function attachMain(){
       DATA.tiposServico.push({id:'t'+Date.now(),nome}); save(DATA); render();
     };
     document.querySelectorAll('.empresaCampo').forEach(i=>i.onchange=e=>{const emp=DATA.minhasEmpresas.find(x=>x.id===i.dataset.e);emp[i.dataset.f]=e.target.value;save(DATA);render();});
+    document.querySelectorAll('.ebCampo').forEach(i=>i.onchange=e=>{ const emp=DATA.minhasEmpresas.find(x=>x.id===i.dataset.e); const c=emp&&(emp.contas||[]).find(x=>x.id===i.dataset.c); if(!c) return; c[i.dataset.f]=e.target.value.trim(); save(DATA); setTimeout(render,0); });
+    document.querySelectorAll('.ebAdd').forEach(b=>b.onclick=()=>{ const emp=DATA.minhasEmpresas.find(x=>x.id===b.dataset.e); if(!emp) return; (emp.contas=emp.contas||[]).push({id:novoId('cb'),apelido:'',banco:'',agencia:'',conta:'',tipo:TIPOS_CONTA[0],pix:''}); save(DATA); render(); });
+    document.querySelectorAll('.ebDel').forEach(b=>b.onclick=()=>{ const emp=DATA.minhasEmpresas.find(x=>x.id===b.dataset.e); if(!emp) return; const usada=DATA.obras.some(o=>(o.etapasPagamento||[]).some(et=>et.contaId===b.dataset.c))||DATA.caixa.some(m=>m.contaId===b.dataset.c); if(usada && !confirm('Esta conta já foi usada em cobranças ou recebimentos. Remover mesmo assim? (o histórico do caixa permanece)')) return; emp.contas=(emp.contas||[]).filter(x=>x.id!==b.dataset.c); DATA.obras.forEach(o=>(o.etapasPagamento||[]).forEach(et=>{ if(et.contaId===b.dataset.c) delete et.contaId; })); save(DATA); render(); });
     document.querySelectorAll('.delempresa').forEach(b=>b.onclick=()=>{DATA.minhasEmpresas=DATA.minhasEmpresas.filter(e=>e.id!==b.dataset.e);DATA.obras.forEach(o=>{if(o.empresaId===b.dataset.e)o.empresaId='';});save(DATA);render();});
     const addEmp=document.getElementById('addEmpresa');
     if(addEmp) addEmp.onclick=()=>{
