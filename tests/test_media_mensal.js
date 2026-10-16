@@ -20,9 +20,9 @@ const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwrig
   const pend=await p.evaluate(()=>aprovacoesPendentes().map(x=>x.e.nome+'@'+x.o.id));
   const hoje=await p.evaluate(()=>hojeISO());
   const esperado=await p.evaluate(()=>DATA.obras[0].equipe[0].etapas.filter(e=>e.mensal&&e.pagarEm<=hojeISO()).length*2);
-  T('aprovações pendentes só das parcelas já vencidas', pend.length===esperado && !pend.some(x=>x.startsWith('Retenção')), {hoje,pend:pend.length,esperado});
+  T('parcelas da média são aprovadas automaticamente (nada pendente de aprovação)', pend.length===0 && await p.evaluate(()=>DATA.obras[0].equipe[0].etapas.filter(e=>e.mensal).every(e=>e.aprovado&&e.auto)), {pend:pend.length});
   // aprovar uma parcela e tentar reaplicar -> bloqueia
-  await p.evaluate(()=>{ const o=DATA.obras[0],m=o.equipe[0]; aprovarEntrega(o,m,m.etapas[0]); render(); });
+  await p.evaluate(()=>{ const o=DATA.obras[0],m=o.equipe[0]; delete m.etapas[0].auto; m.etapas[0].aprovado=false; aprovarEntrega(o,m,m.etapas[0]); render(); });
   T('aprovar parcela define data de pagamento', await p.evaluate(()=>DATA.obras[0].equipe[0].etapas[0].data)==='2026-05-05');
   await p.evaluate(()=>DATA.obras.forEach(o=>o.equipe.forEach(m=>{ if(m.media) delete m.media.travado; })));
   await p.selectOption('.gm-modo','entrega'); await p.click('.gmaplicar[data-esc="todas"]'); await p.waitForTimeout(200);

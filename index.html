@@ -882,6 +882,7 @@ function migrarBaixas(d){
     (o.equipe||[]).forEach(m=>{
       (m.etapas||[]).forEach(e=>{
         if(e.aprovado===undefined) e.aprovado=!!e.concluido;
+        if(m.modelo==='media'&&e.mensal&&!e.retencao&&!e.aprovado&&e.auto===undefined){ e.aprovado=true; e.auto=true; if(!e.data) e.data=e.pagarEm||''; }
         if(!Array.isArray(e.baixas)) e.baixas=[];
         if(e.concluido && e.aprovado && e.valorFixo===undefined) e.valorFixo=equipeMembroValor(o,m)*((e.pct||0)/100);
       });
@@ -1439,7 +1440,7 @@ function mediaEtapas(cfg){
   for(let i=0;i<n;i++){
     const ym=mesDeslocar(cfg.inicio,i), [y,m]=ym.split('-').map(Number);
     const pc=i===n-1? Math.round((100-ret-acum)*1e4)/1e4 : base; acum+=pc;
-    et.push({nome:'Parcela '+(i+1)+'/'+n+' — '+MES_ABREV[m-1]+'/'+y,pct:pc,mensal:true,pagarEm:ym+'-'+String(dia).padStart(2,'0'),concluido:false,data:'',aprovado:false,baixas:[]});
+    const pe=ym+'-'+String(dia).padStart(2,'0'); et.push({nome:'Parcela '+(i+1)+'/'+n+' — '+MES_ABREV[m-1]+'/'+y,pct:pc,mensal:true,pagarEm:pe,concluido:false,data:pe,aprovado:true,auto:true,baixas:[]});
   }
   if(ret>0) et.push({nome:'Retenção para ajustes ('+ret+'%)',pct:ret,retencao:true,concluido:false,data:'',aprovado:false,baixas:[]});
   return et;
@@ -1452,7 +1453,7 @@ function sincRetencoes(obra){
     if(fim){ e.concluido=true; if(!e.data) e.data=hojeISO(); } else { e.concluido=false; e.data=''; }
   }));
 }
-function membroTemMovimento(m){ return (m.etapas||[]).some(e=>(e.baixas||[]).length>0||e.aprovado); }
+function membroTemMovimento(m){ return (m.etapas||[]).some(e=>(e.baixas||[]).length>0||(e.aprovado&&!e.auto)); }
 // modo: 'media' | 'entrega'; obraId vazio = todas as obras do colaborador. Não mexe em quem já tem aprovação/pagamento.
 function aplicarModeloPagamento(colabId,modo,cfg,obraId){
   let ok=0,bloq=0;
@@ -1506,11 +1507,22 @@ function mediaColabEstado(u){
 function confMensalColab(u){
   const c=DATA.colaboradores.find(x=>x.id===u); const pm=(c&&c.pagoMes)||{}; const mp={};
   DATA.obras.forEach(o=>(o.equipe||[]).forEach(m=>{ if(m.colaboradorId!==u||m.inativo||m.modelo!=='media') return;
-    (m.etapas||[]).forEach(e=>{ if(!e.mensal||!e.pagarEm) return; const ym=e.pagarEm.slice(0,7); const r=mp[ym]=mp[ym]||{ym,dev:0,sis:0}; r.dev+=valorEquipeEtapa(o,m,e); r.sis+=baixaTotal(e); }); }));
+    (m.etapas||[]).forEach(e=>{ if(!e.mensal||!e.pagarEm) return; const ym=e.pagarEm.slice(0,7); const r=mp[ym]=mp[ym]||{ym,dev:0,sis:0}; const vv=valorEquipeEtapa(o,m,e); r.dev+=vv; r.sis+=baixaTotal(e); (r.det=r.det||[]).push({emp:o.empresaId||'',obra:o.nomeObra,dev:vv}); }); }));
   Object.keys(pm).forEach(ym=>{ mp[ym]=mp[ym]||{ym,dev:0,sis:0}; });
   const rows=Object.values(mp).sort((a,b)=>a.ym<b.ym?-1:1); let acum=0;
   rows.forEach(r=>{ r.man=pm[r.ym]!==undefined&&pm[r.ym]!==''?+pm[r.ym]:null; r.pago=r.man!==null?r.man:r.sis; r.dif=r.dev-r.pago; acum+=r.dif; r.acum=acum; });
   return rows;
+}
+// Fechamento da média: o que foi pago no mês (valor digitado na conferência) rateado por empresa/obra pelo devido
+function mediaMesEmp(uid){
+  const out={}; const rows=confMensalColab(uid);
+  let empPadrao=''; DATA.obras.forEach(o=>(o.equipe||[]).forEach(m=>{ if(!empPadrao&&m.colaboradorId===uid&&m.modelo==='media'&&!m.inativo) empPadrao=o.empresaId||''; }));
+  rows.forEach(r=>{ if(!(r.pago>0.004)) return; const det=(r.det&&r.det.length)?r.det:[{emp:empPadrao,obra:'Pagamento do mês',dev:0}];
+    const totDev=det.reduce((a,x)=>a+x.dev,0);
+    det.forEach(d=>{ const val=totDev>0?r.pago*d.dev/totDev:r.pago/det.length; if(!(val>0.004)) return;
+      const k=mesAnoLabel(r.ym+'-01')+'|'+d.emp; const g=out[k]=out[k]||{mes:mesAnoLabel(r.ym+'-01'),emp:d.emp,itens:[],total:0};
+      g.itens.push({obra:d.obra,papel:'Média mensal',p:0,val}); g.total+=val; }); });
+  return out;
 }
 function confMensalHtml(u){
   const rows=confMensalColab(u); if(!rows.length) return '';
@@ -2453,7 +2465,7 @@ function aditivoBox(obra,s){
   </div>`;
 }
 
-function equipeTemHistorico(m){ return (m.etapas||[]).some(e=>(e.baixas||[]).length>0||e.aprovado); }
+function equipeTemHistorico(m){ return (m.etapas||[]).some(e=>(e.baixas||[]).length>0||(e.aprovado&&!e.auto)); }
 function obraConciliacao(o){
   const original=(o.servicos||[]).reduce((a,sv)=>a+(sv.valorTotal||0),0);
   const base=valorContratoBase(o);
@@ -2765,7 +2777,7 @@ function pagamentosDoColaborador(uid,todasAsObras){
         if(!e.pct) return;
         const val=valorEquipeEtapa(obra,m,e), pg=baixaTotal(e), sit=equipeSituacao(e,val);
         total+=val; if(e.aprovado) aprovado+=val; pago+=pg;
-        linhas.push({obraId:obra.id,empresaId:obra.empresaId||'',obra:obra.nomeObra,equipeIdx:mi,etapaIdx:ei,tipo:'equipe_etapa',papel:(m.papel||'Equipe')+' — '+e.nome,p:e.pct,val,pago:pg,saldo:e.aprovado?Math.max(0,val-pg):0,sit,concluido:eqConcluida(e),aprovado:!!e.aprovado,baixas:e.baixas||[],pagarEm:e.pagarEm||'',data:e.data||'',mesAno:e.aprovado?mesAnoLabel(e.data):''});
+        linhas.push({obraId:obra.id,empresaId:obra.empresaId||'',obra:obra.nomeObra,equipeIdx:mi,etapaIdx:ei,tipo:'equipe_etapa',papel:(m.papel||'Equipe')+' — '+e.nome,p:e.pct,val,pago:pg,saldo:e.aprovado?Math.max(0,val-pg):0,sit,concluido:eqConcluida(e),aprovado:!!e.aprovado,auto:!!e.auto,mensal:!!e.mensal&&!e.retencao,baixas:e.baixas||[],pagarEm:e.pagarEm||'',data:e.data||'',mesAno:e.aprovado?mesAnoLabel(e.data):''});
       });
     });
   });
@@ -2810,7 +2822,7 @@ function colaboradoresView(){
   const rows=DATA.colaboradores.map(u=>{
     const {total,aprovado,pago,saldo,linhas}=pagamentosDoColaborador(u.id);
     const linhasHtml=linhas.map(l=>{
-      const aprov = l.tipo==='despesa' ? '<span class="small">despesa da obra</span>' : l.concluido
+      const aprov = l.tipo==='despesa' ? '<span class="small">despesa da obra</span>' : l.auto ? '<span class="small">✔ automática (média)</span>' : l.concluido
         ? `<label class="row-flex" style="gap:4px;flex-wrap:nowrap;"><input type="checkbox" class="aprovarEtapa" data-o="${esc(l.obraId)}" data-mi="${l.equipeIdx}" data-ei="${l.etapaIdx}" ${l.aprovado?'checked':''} ${l.baixas.length?'disabled title="Desfaça os pagamentos para alterar a aprovação"':''}><span class="small">${l.aprovado?'Aprovada':'Aprovar'}</span></label>`
         : '<span class="small">aguardando o colaborador</span>';
       const pagto = l.tipo==='despesa' ? `<div class="small">Vencimento: ${l.pagarEm?isoToBr(l.pagarEm):'sem data (defina na obra)'}</div>`+baixaWidget('despobra',l.obraId,l.despId,'',l.saldo,l.baixas,'Pagar')
@@ -2831,6 +2843,7 @@ function colaboradoresView(){
     const porMes={};
     linhas.forEach(l=>{
       if(l.tipo==='despesa') return; // despesas da obra não entram em recibo/NF
+      if(l.mensal) return; // parcelas da média: fechamento pelo valor pago na conferência mensal
       const emp=l.empresaId||'';
       if(tipoDocumento(u,emp)==='recibo'){
         const meses={}; (l.baixas||[]).forEach(b=>{ if(!b.data) return; const ma=mesAnoLabel(b.data); meses[ma]=(meses[ma]||0)+b.valor; });
@@ -2839,6 +2852,7 @@ function colaboradoresView(){
         const k=l.mesAno+'|'+emp; (porMes[k]=porMes[k]||[]).push(l);
       }
     });
+    const mm=mediaMesEmp(u.id); Object.keys(mm).forEach(k=>{ (porMes[k]=porMes[k]||[]).push(...mm[k].itens.map(x=>({...x,val:x.val}))); });
     const mesesOrdenados=Object.keys(porMes).sort((a,b)=>{
       const da=a.split('|')[0].split('/'), db=b.split('|')[0].split('/');
       return (da[1]+da[0]).localeCompare(db[1]+db[0]);
@@ -2853,7 +2867,7 @@ function colaboradoresView(){
         : tipo==='nf' ? `<button class="btn secondary gerarnf" data-u="${esc(u.id)}" data-mes="${m}" data-e="${emp}">Solicitar NF ao colaborador</button>`
         : '<span class="small neg">Defina a empresa da obra para gerar o documento</span>';
       return `<div class="row-flex" style="justify-content:space-between;border-top:1px solid var(--border);padding:6px 0;">
-        <span class="small">${m} — ${empLbl} — ${itens.length} etapa(s) — ${tipo==='recibo'?'pago':'aprovado'}: <b>${fmt(totalMes)}</b></span>
+        <span class="small">${m} — ${empLbl} — ${itens.length} etapa(s) — ${tipo==='recibo'?'pago':'a pagar'}: <b>${fmt(totalMes)}</b>${tipo==='recibo'?' · associado (sem NF)':''}</span>
         ${btn}
       </div>`;
     }).join('');
@@ -3027,7 +3041,7 @@ function colabPagamentosView(){
 function ehPimentel(empId){ const e=DATA.minhasEmpresas.find(x=>x.id===empId); return !!e && (e.nome||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').includes('pimentel'); }
 function tipoDocumento(u,empId){
   if(!empId) return '';
-  if(u.socio && ehPimentel(empId)) return 'recibo';
+  if(ehPimentel(empId)) return 'recibo'; // quem presta serviço pela Pimentel Consultoria é associado: recibo, sem NF
   return 'nf';
 }
 function valorPorExtenso(v){
@@ -3063,13 +3077,14 @@ function abrirDoc(html){
 function dadosDocColab(uid,mesAno,empId){
   const u=DATA.colaboradores.find(c=>c.id===uid); if(!u) return null;
   const emp=DATA.minhasEmpresas.find(e=>e.id===empId)||{};
-  const linhas=pagamentosDoColaborador(uid).linhas.filter(l=>l.tipo!=='despesa');
+  const linhas=pagamentosDoColaborador(uid).linhas.filter(l=>l.tipo!=='despesa'&&!l.mensal);
   let itens;
   if(tipoDocumento(u,empId)==='recibo'){
     itens=[]; linhas.filter(l=>(l.empresaId||'')===(empId||'')).forEach(l=>{ const v=(l.baixas||[]).filter(b=>b.data&&mesAnoLabel(b.data)===mesAno).reduce((a,b)=>a+b.valor,0); if(v>0.004) itens.push({...l,val:v}); });
   } else itens=linhas.filter(l=>l.aprovado && l.mesAno===mesAno && (l.empresaId||'')===(empId||''));
+  const mmk=mediaMesEmp(uid)[mesAno+'|'+(empId||'')]; if(mmk) itens=itens.concat(mmk.itens);
   const total=itens.reduce((s,l)=>s+l.val,0);
-  const itensRows=itens.map(l=>`<tr><td>${esc(l.obra)}</td><td>${esc(l.papel)}</td><td style="text-align:right;">${pct(l.p)}</td><td style="text-align:right;">${fmt(l.val)}</td></tr>`).join('');
+  const itensRows=itens.map(l=>`<tr><td>${esc(l.obra)}</td><td>${esc(l.papel)}</td><td style="text-align:right;">${l.p?pct(l.p):'—'}</td><td style="text-align:right;">${fmt(l.val)}</td></tr>`).join('');
   return {u,emp,itens,total,itensRows};
 }
 function abrirReciboColaborador(uid, mesAno, empId){
