@@ -19,6 +19,14 @@ const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwrig
   T('grupo gravado com nome e fim', await p.evaluate(()=>{const md=DATA.obras[0].equipe[0].media; return md.grupo==='Grupo teste'&&md.fim==='2027-02'&&md.grupoId===DATA.obras[2].equipe[0].media.grupoId&&!!md.grupoId;}));
   T('painel lista o grupo aplicado com as 2 obras', (await p.locator('.servbox:has-text("Grupos aplicados")').count())>0 && /Grupo teste/.test(await p.innerText('.servbox:has-text("Grupos aplicados")')) && /A · C/.test(await p.innerText(".servbox:has-text(\"Grupos aplicados\")")));
   T('só as obras marcadas ficam em média (4 parcelas + retenção)', r[0].md==='media'&&r[0].n===5&&r[0].m===4&&r[0].ini==='2026-11'&&r[2].md==='media'&&r[1].md==='', r);
+  // 2 obras x 10.000 x 90%/4 meses -> 4.500/mês por obra? total mensal do grupo = 4.500
+  const mes=await p.evaluate(()=>confMensalColab('u1').map(r=>r.ym+':'+r.dev));
+  T('conferência mensal lista os 4 meses com devido 4.500', mes.length===4&&mes[0]==='2026-11:4500', mes);
+  await p.fill('.pagoMes[data-m="2026-11"]','4.000,00'); await p.press('.pagoMes[data-m="2026-11"]','Tab'); await p.waitForTimeout(200);
+  await p.fill('.pagoMes[data-m="2026-12"]','5.000,00'); await p.press('.pagoMes[data-m="2026-12"]','Tab'); await p.waitForTimeout(200);
+  const cm=await p.evaluate(()=>confMensalColab('u1').map(r=>r.dif+'/'+r.acum));
+  T('diferença e acumulado (500, depois 0, depois -500...)', cm[0]==='500/500'&&cm[1]==='-500/0'&&cm[2]==='4500/4500', cm);
+  T('pago manual gravado no colaborador', await p.evaluate(()=>DATA.colaboradores[0].pagoMes['2026-11']===4000&&DATA.colaboradores[0].pagoMes['2026-12']===5000));
   T('grupo nasce travado (sem botão Desfazer, checkbox da obra bloqueado)', await p.locator('.mcDesfazer').count()===0 && await p.locator('.mcOb[disabled]').count()===2 && await p.evaluate(()=>DATA.obras[0].equipe[0].media.travado===true));
   await p.evaluate(()=>{ aplicarModeloPagamento('u1','entrega',{},['o1']); }); // tentativa de alterar grupo travado
   T('grupo travado não é alterado por aplicar', await p.evaluate(()=>DATA.obras[0].equipe[0].modelo==='media'));

@@ -1502,6 +1502,29 @@ function mediaColabEstado(u){
     st=MEDIA_COLAB[u]={obras:[],cfg:ref?{...ref,fim:ref.fim||mesDeslocar(ref.inicio,(+ref.meses||1)-1),grupo:'',grupoId:undefined}:mediaPadrao()}; }
   return st;
 }
+// Conferência mensal: devido (parcelas da média) × pago (manual; se vazio, usa o baixado no sistema)
+function confMensalColab(u){
+  const c=DATA.colaboradores.find(x=>x.id===u); const pm=(c&&c.pagoMes)||{}; const mp={};
+  DATA.obras.forEach(o=>(o.equipe||[]).forEach(m=>{ if(m.colaboradorId!==u||m.inativo||m.modelo!=='media') return;
+    (m.etapas||[]).forEach(e=>{ if(!e.mensal||!e.pagarEm) return; const ym=e.pagarEm.slice(0,7); const r=mp[ym]=mp[ym]||{ym,dev:0,sis:0}; r.dev+=valorEquipeEtapa(o,m,e); r.sis+=baixaTotal(e); }); }));
+  Object.keys(pm).forEach(ym=>{ mp[ym]=mp[ym]||{ym,dev:0,sis:0}; });
+  const rows=Object.values(mp).sort((a,b)=>a.ym<b.ym?-1:1); let acum=0;
+  rows.forEach(r=>{ r.man=pm[r.ym]!==undefined&&pm[r.ym]!==''?+pm[r.ym]:null; r.pago=r.man!==null?r.man:r.sis; r.dif=r.dev-r.pago; acum+=r.dif; r.acum=acum; });
+  return rows;
+}
+function confMensalHtml(u){
+  const rows=confMensalColab(u); if(!rows.length) return '';
+  const cc=esc(u); const hoje=new Date().toISOString().slice(0,7);
+  const tD=rows.reduce((a,r)=>a+r.dev,0), tP=rows.reduce((a,r)=>a+r.pago,0), saldo=tD-tP;
+  const rotulo=v=>Math.abs(v)<0.005?'<span class="small">em dia</span>':v>0?`<span class="neg">pagar +${fmt(v)}</span>`:`<span class="pos">descontar ${fmt(-v)}</span>`;
+  return `<div class="servbox" style="margin-top:10px;"><b>Conferência mensal — devido × pago</b>
+    <p class="small" style="margin:2px 0 6px;">Digite o que você realmente pagou em cada mês. Se deixar em branco, vale o que foi baixado no sistema. Diferença positiva = falta pagar; negativa = pagou a mais (descontar nas próximas).</p>
+    <table><tr><th>Mês</th><th class="num">Devido</th><th class="num">Pago (manual)</th><th class="num">Diferença do mês</th><th class="num">Acumulado</th><th>Situação</th></tr>
+    ${rows.map(r=>`<tr><td>${esc(r.ym.slice(5)+'/'+r.ym.slice(0,4))}${r.ym===hoje?' <span class="small">(mês atual)</span>':''}</td><td class="num">${fmt(r.dev)}</td>
+      <td class="num"><input type="text" inputmode="decimal" class="val-input pagoMes" data-u="${cc}" data-m="${esc(r.ym)}" value="${r.man!==null?r.man.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}):''}" placeholder="${r.sis?r.sis.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}):'0,00'}" style="width:120px;text-align:right;"></td>
+      <td class="num ${r.dif>0.005?'neg':r.dif<-0.005?'pos':''}">${fmt(r.dif)}</td><td class="num">${fmt(r.acum)}</td><td>${rotulo(r.acum)}</td></tr>`).join('')}
+    <tr><td><b>Total</b></td><td class="num"><b>${fmt(tD)}</b></td><td class="num"><b>${fmt(tP)}</b></td><td class="num"><b>${fmt(saldo)}</b></td><td></td><td>${rotulo(saldo)}</td></tr></table></div>`;
+}
 function mediaColabHtml(u){
   const st=mediaColabEstado(u), cc=esc(u);
   const vinc=DATA.obras.map(o=>({o,ms:(o.equipe||[]).filter(m=>m.colaboradorId===u&&!m.inativo)})).filter(x=>x.ms.length);
@@ -1527,6 +1550,7 @@ function mediaColabHtml(u){
   return `<div class="servbox" style="background:var(--accent-bg);margin-top:10px;"><b>Pagamento por média — grupo de obras</b>
     <p class="small" style="margin:2px 0 6px;">Marque as obras do grupo e defina o período (início e finalização): o valor dele(a) nessas obras é dividido em parcelas mensais dentro do período, e a retenção fica guardada até cada obra ser concluída.</p>
     ${gHtml?`<div style="margin-bottom:8px;"><span class="small">Grupos aplicados</span>${gHtml}</div>`:''}
+    ${confMensalHtml(u)}
     <table><tr><th>Obra</th><th class="num">Valor dele(a)</th><th>Forma atual</th></tr>${linhas}</table>
     <div class="row-flex" style="flex-wrap:wrap;gap:8px;margin-top:8px;align-items:center;">
       <label class="small">nome do grupo <input type="text" class="mcCfg" data-u="${cc}" data-f="grupo" value="${esc(c.grupo||'')}" placeholder="ex.: Grupo 2º semestre" style="width:170px;"></label>
@@ -3678,6 +3702,7 @@ function attachMain(){
     });
     document.querySelectorAll('.mcOb').forEach(i=>i.onchange=e=>{ const st=mediaColabEstado(i.dataset.u); st.obras=st.obras.filter(x=>x!==i.dataset.o); if(e.target.checked) st.obras.push(i.dataset.o); setTimeout(render,0); });
     document.querySelectorAll('.mcCfg').forEach(i=>i.onchange=e=>{ const st=mediaColabEstado(i.dataset.u); st.cfg[i.dataset.f]=e.target.value; const c=st.cfg; if(c.inicio&&(!c.fim||c.fim<c.inicio)) c.fim=c.inicio; setTimeout(render,0); });
+    document.querySelectorAll('.pagoMes').forEach(i=>i.onchange=e=>{ const c=DATA.colaboradores.find(x=>x.id===i.dataset.u); if(!c) return; c.pagoMes=c.pagoMes||{}; const t=String(e.target.value).trim(); if(t===''){ delete c.pagoMes[i.dataset.m]; } else { const v=parseBRL(t); if(isNaN(v)){ delete c.pagoMes[i.dataset.m]; } else c.pagoMes[i.dataset.m]=v; } if(!Object.keys(c.pagoMes).length) delete c.pagoMes; save(DATA); setTimeout(render,0); });
     document.querySelectorAll('.mcTrava').forEach(b=>b.onclick=()=>{ const t=b.dataset.t==='1'; if(!t&&!confirm('Destravar o grupo? Ele poderá ser alterado ou desfeito.')) return; const ids=b.dataset.o.split(','); let n=0; DATA.obras.forEach(o=>{ if(!ids.includes(o.id)) return; (o.equipe||[]).forEach(m=>{ if(m.colaboradorId===b.dataset.u&&m.media){ if(t) m.media.travado=true; else delete m.media.travado; n++; } }); }); logAcao((t?'Grupo de média travado: ':'Grupo de média destravado: ')+colabNome(b.dataset.u)+' ('+n+' vínculo(s))'); save(DATA); setTimeout(render,0); });
     document.querySelectorAll('.mcDesfazer').forEach(b=>b.onclick=()=>{ if(!confirm('Desfazer o grupo e voltar essas obras para "por entrega"? (obras com aprovação ou pagamento não são alteradas)')) return; const r=aplicarModeloPagamento(b.dataset.u,'entrega',{},b.dataset.o.split(',')); logAcao('Grupo de média desfeito: '+colabNome(b.dataset.u)+' ('+r.ok+' vínculo(s))'); if(r.bloq) alert(r.bloq+' vínculo(s) já têm aprovação ou pagamento e não foram alterados.'); save(DATA); setTimeout(render,0); });
     document.querySelectorAll('.mcAplicar').forEach(b=>b.onclick=()=>{
