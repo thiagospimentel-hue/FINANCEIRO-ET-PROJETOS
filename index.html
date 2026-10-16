@@ -1707,11 +1707,13 @@ function dashFiltroBar(total,achadas){
   const emp=(DATA.minhasEmpresas||[]).map(e=>`<option value="${esc(e.id)}" ${e.id===FILTER_DASH_EMP?'selected':''}>${esc(e.nome)}</option>`).join('');
   return `<div class="card">
     <div class="row-flex" style="flex-wrap:wrap;gap:8px;align-items:center;">
-      <input type="search" id="dashBusca" placeholder="🔎 Buscar obra (nome, código, cliente, construtora…)" value="${esc(FILTER_DASH_BUSCA)}" autocomplete="off" style="flex:1;min-width:240px;">
+      <input type="search" id="dashBusca" placeholder="🔎 Buscar obra (nome, código, cliente, construtora…)" value="${esc(FILTER_DASH_BUSCA)}" list="dashObras" autocomplete="off" style="flex:1;min-width:240px;">
+      <datalist id="dashObras">${obrasVisiveis().map(o=>`<option value="${esc(o.nomeObra)}">${esc(o.codigo||'')}</option>`).join('')}</datalist>
       <select id="dashStatus"><option value="">Todos os status</option>${st}</select>
       <select id="dashEmp"><option value="">Todas as empresas</option>${emp}</select>
       ${dashFiltroAtivo()?'<button class="btn secondary" id="dashLimpar">Limpar filtros</button>':''}
     </div>
+    <div class="row-flex" style="flex-wrap:wrap;gap:6px;margin-top:8px;">${obrasVisiveis().map(o=>`<button class="btn ${semAcento(FILTER_DASH_BUSCA.trim())===semAcento(o.nomeObra)?'':'secondary'} dashChip" data-n="${esc(o.nomeObra)}" title="${esc(o.codigo||'')}">${esc(o.nomeObra)}</button>`).join('')}</div>
     ${dashFiltroAtivo()?`<p class="small" style="margin:8px 0 0;">Mostrando <b>${achadas}</b> de ${total} obra(s). Os blocos de caixa e equipe continuam mostrando a empresa toda; "Visão geral", "Ranking" e "Faturamento por etapa" seguem o filtro.</p>`:''}
   </div>`;
 }
@@ -3162,6 +3164,7 @@ function attachMain(){
   if(TAB==='dashboard' && SESSION.role==='admin'){
     const dB=document.getElementById('dashBusca');
     if(dB) dB.oninput=e=>{ FILTER_DASH_BUSCA=e.target.value; render(); const n=document.getElementById('dashBusca'); if(n){ n.focus(); try{ n.setSelectionRange(n.value.length,n.value.length); }catch(_){} } };
+    document.querySelectorAll('.dashChip').forEach(b=>b.onclick=()=>{ FILTER_DASH_BUSCA = semAcento(FILTER_DASH_BUSCA.trim())===semAcento(b.dataset.n) ? '' : b.dataset.n; render(); });
     const dS=document.getElementById('dashStatus'); if(dS) dS.onchange=e=>{FILTER_DASH_STATUS=e.target.value;render();};
     const dE=document.getElementById('dashEmp'); if(dE) dE.onchange=e=>{FILTER_DASH_EMP=e.target.value;render();};
     const dL=document.getElementById('dashLimpar'); if(dL) dL.onclick=()=>{FILTER_DASH_BUSCA='';FILTER_DASH_STATUS='';FILTER_DASH_EMP='';FILTER_FAT_MES='';FILTER_FAT_STATUS='';render();};
