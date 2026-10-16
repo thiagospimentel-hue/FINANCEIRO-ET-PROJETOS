@@ -2044,6 +2044,8 @@ function obrasView(){
       <div class="field" style="margin-top:8px;"><label>Condições de pagamento (texto livre)</label><textarea class="obraCond" data-o="${esc(obra.id)}" rows="2">${esc(obra.condicoes)}</textarea></div>
       <h3>Etapas de pagamento (marcos contratuais)</h3>
       ${etapasBox(obra,r)}
+      <h3>Serviços da obra</h3>
+      ${servGridHtml(obra,servRows)}
       <div class="coordbox">
         <h3 style="margin-top:0;">Equipe da obra</h3>
         <p class="small">Cadastre coordenadores, auxiliares, equipe de detalhamento etc. Para cada um, defina o papel e o percentual pago — sobre o líquido total da obra (coordenação, documentação) ou sobre o líquido de uma disciplina específica (ex: detalhamento só em cima de Elétrica), dividido nas 4 etapas fixas (Projeto Básico 30%, Pré-Executivo 30%, Executivo 30%, Revisão de Executivo 10%). Clique em "Ver etapas" para cada pessoa; ela mesma marca a etapa como entregue na aba dela.</p>
@@ -2056,8 +2058,6 @@ function obrasView(){
         <option value="Equipe de Detalhamento"></option>
         <option value="Responsável Técnico"></option>
       </datalist>
-      <h3>Serviços da obra</h3>
-      ${servGridHtml(obra,servRows)}
       ${docsBox(obra)}
       ${despesasObraBox(obra)}
       ${resumoGridObra(obra).html}
