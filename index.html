@@ -1478,8 +1478,9 @@ function membroTemMovimento(m){ return (m.etapas||[]).some(e=>(e.baixas||[]).len
 // Remarca a média preservando as parcelas que já têm pagamento: o que falta é redistribuído nos demais meses do novo período
 function remarcarMediaPreservando(o,m,cfg){
   const total=equipeMembroValor(o,m); if(!(total>0)) return false;
-  const kept=(m.etapas||[]).filter(e=>(e.baixas||[]).length>0&&!e.retencao);
-  const keptRet=(m.etapas||[]).filter(e=>e.retencao&&((e.baixas||[]).length>0||e.aprovado&&!e.auto));
+  const avul=(m.etapas||[]).filter(e=>e.avulso);
+  const kept=(m.etapas||[]).filter(e=>(e.baixas||[]).length>0&&!e.retencao&&!e.avulso);
+  const keptRet=(m.etapas||[]).filter(e=>!e.avulso&&e.retencao&&((e.baixas||[]).length>0||e.aprovado&&!e.auto));
   if(keptRet.length) return false;
   const novas=mediaEtapas(cfg); const retNova=novas.find(e=>e.retencao);
   const keptYm=new Set(kept.map(e=>(e.pagarEm||'').slice(0,7)));
@@ -1494,7 +1495,7 @@ function remarcarMediaPreservando(o,m,cfg){
   const mens=kept.concat(livres).sort((a,b)=>(a.pagarEm||'')<(b.pagarEm||'')?-1:1);
   mens.forEach((e,i)=>{ const [y,mm]=(e.pagarEm||'').slice(0,7).split('-').map(Number); e.nome='Parcela '+(i+1)+'/'+mens.length+' — '+MES_ABREV[mm-1]+'/'+y; });
   m.modelo='media'; m.media={inicio:cfg.inicio,meses:mens.length,ret:+cfg.ret,dia:+cfg.dia,travado:true}; if(cfg.fim) m.media.fim=cfg.fim; if(cfg.grupoId) m.media.grupoId=cfg.grupoId; if(cfg.grupo) m.media.grupo=cfg.grupo;
-  m.etapas=mens.concat(retNova?[retNova]:[]);
+  m.etapas=mens.concat(retNova?[retNova]:[]).concat(avul);
   return true;
 }
 function aplicarModeloPagamento(colabId,modo,cfg,obraId){
@@ -1507,8 +1508,8 @@ function aplicarModeloPagamento(colabId,modo,cfg,obraId){
       if(m.media&&m.media.travado&&!cfg.destravar){ bloq++; return; }
       if(jaMedia&&modo==='media'&&(m.etapas||[]).some(e=>(e.baixas||[]).length>0)){ if(remarcarMediaPreservando(o,m,cfg)) ok++; else bloq++; return; }
       if(membroTemMovimento(m)){ bloq++; return; }
-      if(modo==='media'){ m.modelo='media'; m.media={inicio:cfg.inicio,meses:+cfg.meses,ret:+cfg.ret,dia:+cfg.dia,travado:true}; if(cfg.fim) m.media.fim=cfg.fim; if(cfg.grupoId) m.media.grupoId=cfg.grupoId; if(cfg.grupo) m.media.grupo=cfg.grupo; m.etapas=mediaEtapas(cfg); }
-      else { delete m.modelo; delete m.media; m.etapas=etapasDoPapel(m.papel); }
+      if(modo==='media'){ m.modelo='media'; m.media={inicio:cfg.inicio,meses:+cfg.meses,ret:+cfg.ret,dia:+cfg.dia,travado:true}; if(cfg.fim) m.media.fim=cfg.fim; if(cfg.grupoId) m.media.grupoId=cfg.grupoId; if(cfg.grupo) m.media.grupo=cfg.grupo; m.etapas=mediaEtapas(cfg).concat((m.etapas||[]).filter(e=>e.avulso)); }
+      else { delete m.modelo; delete m.media; m.etapas=etapasDoPapel(m.papel).concat((m.etapas||[]).filter(e=>e.avulso)); }
       ok++;
     });
     sincRetencoes(o);
@@ -1550,8 +1551,8 @@ function mediaColabEstado(u){
 // Conferência mensal: devido (parcelas da média) × pago (manual; se vazio, usa o baixado no sistema)
 function confMensalColab(u){
   const c=DATA.colaboradores.find(x=>x.id===u); const pm=(c&&c.pagoMes)||{}; const mp={};
-  DATA.obras.forEach(o=>(o.equipe||[]).forEach(m=>{ if(m.colaboradorId!==u||m.inativo||m.modelo!=='media') return;
-    (m.etapas||[]).forEach(e=>{ if(!e.mensal||!e.pagarEm) return; const ym=e.pagarEm.slice(0,7); const r=mp[ym]=mp[ym]||{ym,dev:0,sis:0}; const vv=valorEquipeEtapa(o,m,e); r.dev+=vv; r.sis+=baixaTotal(e); (r.det=r.det||[]).push({emp:o.empresaId||'',obra:o.nomeObra,dev:vv}); }); }));
+  DATA.obras.forEach(o=>(o.equipe||[]).forEach(m=>{ if(m.colaboradorId!==u||m.inativo) return;
+    (m.etapas||[]).forEach(e=>{ if(!((e.mensal&&m.modelo==='media')||e.avulso)||!e.pagarEm) return; const ym=e.pagarEm.slice(0,7); const r=mp[ym]=mp[ym]||{ym,dev:0,sis:0,avu:0}; const vv=valorEquipeEtapa(o,m,e); r.dev+=vv; if(e.avulso) r.avu=(r.avu||0)+vv; r.sis+=baixaTotal(e); (r.det=r.det||[]).push({emp:o.empresaId||'',obra:o.nomeObra,dev:vv}); }); }));
   Object.keys(pm).forEach(ym=>{ mp[ym]=mp[ym]||{ym,dev:0,sis:0}; });
   const rows=Object.values(mp).sort((a,b)=>a.ym<b.ym?-1:1); let acum=0;
   rows.forEach(r=>{ r.man=pm[r.ym]!==undefined&&pm[r.ym]!==''?+pm[r.ym]:null; r.pago=r.man!==null?r.man:r.sis; r.dif=r.dev-r.pago; acum+=r.dif; r.acum=acum; });
@@ -1571,8 +1572,8 @@ function mediaMesEmp(uid){
   return out;
 }
 function etapasMesMedia(uid,ym){
-  const out=[]; DATA.obras.forEach(o=>(o.equipe||[]).forEach((m,mi)=>{ if(m.colaboradorId!==uid||m.inativo||m.modelo!=='media') return;
-    (m.etapas||[]).forEach((e,ei)=>{ if(e.mensal&&e.pagarEm&&e.pagarEm.slice(0,7)===ym) out.push({o,m,mi,e,ei,v:valorEquipeEtapa(o,m,e)}); }); }));
+  const out=[]; DATA.obras.forEach(o=>(o.equipe||[]).forEach((m,mi)=>{ if(m.colaboradorId!==uid||m.inativo) return;
+    (m.etapas||[]).forEach((e,ei)=>{ if(((e.mensal&&m.modelo==='media')||e.avulso)&&e.pagarEm&&e.pagarEm.slice(0,7)===ym) out.push({o,m,mi,e,ei,v:valorEquipeEtapa(o,m,e)}); }); }));
   return out;
 }
 // Registra o pagamento do mês: baixa nas parcelas (rateio pelo devido) + saída no caixa
@@ -1597,8 +1598,40 @@ function desfazerPagoMes(uid,ym){
   delete c.pagoRegistro[ym]; if(!Object.keys(c.pagoRegistro).length) delete c.pagoRegistro;
   logAcao('Pagamento do mês desfeito: '+colabNome(uid)+' — '+ym.slice(5)+'/'+ym.slice(0,4)); return true;
 }
+// Serviço avulso do mês: valor próprio, pago no mês (não é dividido em parcelas); fica como uma etapa de valor fixo no vínculo da obra
+function adicionarAvulso(uid,obraId,ym,desc,valor){
+  const o=DATA.obras.find(x=>x.id===obraId); const m=o&&(o.equipe||[]).find(x=>x.colaboradorId===uid&&!x.inativo); valor=r2(valor);
+  if(!m||!/^\d{4}-\d{2}$/.test(ym||'')||!(valor>0)) return false;
+  const dia=String((m.media&&m.media.dia)||5).padStart(2,'0'); const total=equipeMembroValor(o,m);
+  const pe=ym+'-'+dia; const [y,mm]=ym.split('-').map(Number);
+  m.etapas=m.etapas||[];
+  m.etapas.push({nome:'Avulso '+MES_ABREV[mm-1]+'/'+y+' — '+((desc||'').trim()||'serviço'),pct:Math.max(0.0001,total>0?Math.round(valor/total*100*1e4)/1e4:0.0001),avulso:true,mensal:false,valorFixo:valor,pagarEm:pe,data:pe,concluido:false,aprovado:true,auto:true,baixas:[]});
+  logAcao('Serviço avulso lançado: '+colabNome(uid)+' — '+o.nomeObra+' — '+ym.slice(5)+'/'+ym.slice(0,4)+' — '+fmt(valor));
+  return true;
+}
+function removerAvulso(uid,obraId,etapaNome){
+  const o=DATA.obras.find(x=>x.id===obraId); if(!o) return false; let ok=false;
+  (o.equipe||[]).forEach(m=>{ if(m.colaboradorId!==uid) return; const i=(m.etapas||[]).findIndex(e=>e.avulso&&e.nome===etapaNome&&!(e.baixas||[]).length); if(i>=0){ m.etapas.splice(i,1); ok=true; } });
+  if(ok) logAcao('Serviço avulso removido: '+colabNome(uid)+' — '+o.nomeObra+' — '+etapaNome); return ok;
+}
+function avulsoHtml(u){
+  const cc=esc(u); const vinc=DATA.obras.filter(o=>(o.equipe||[]).some(m=>m.colaboradorId===u&&!m.inativo));
+  if(!vinc.length) return '';
+  const itens=[]; vinc.forEach(o=>(o.equipe||[]).forEach(m=>{ if(m.colaboradorId!==u) return; (m.etapas||[]).forEach(e=>{ if(e.avulso) itens.push({o,e,v:valorEquipeEtapa(o,m,e)}); }); }));
+  itens.sort((a,b)=>(a.e.pagarEm||'')<(b.e.pagarEm||'')?-1:1);
+  const lista=itens.map(x=>{ const pg=baixaTotal(x.e); const paga=pg>=x.v-0.005; return `<tr><td>${esc((x.e.pagarEm||'').slice(5,7)+'/'+(x.e.pagarEm||'').slice(0,4))}</td><td>${esc(x.o.nomeObra)}</td><td>${esc(x.e.nome.replace(/^Avulso [^—]*— /,''))}</td><td class="num">${fmt(x.v)}</td><td>${paga?'<span class="pos">pago</span>':pg>0?'<span class="neg">parcial</span>':'<span class="small">a pagar</span>'}</td><td>${pg>0?'':`<button class="btn danger avDel" data-u="${cc}" data-o="${esc(x.o.id)}" data-n="${esc(x.e.nome)}" style="padding:0 6px;">x</button>`}</td></tr>`; }).join('');
+  return `<div class="servbox" style="margin-top:10px;"><b>Serviços avulsos do mês</b>
+    <p class="small" style="margin:2px 0 6px;">Serviço menor combinado e pago naquele mês: entra no devido do mês e <b>não é dividido em parcelas</b>, fora da média.</p>
+    <div class="row-flex" style="flex-wrap:wrap;gap:6px;align-items:flex-end;">
+      <label class="small">mês<br><input type="month" class="avMes" value="${hojeISO().slice(0,7)}"></label>
+      <label class="small">obra<br><select class="avObra">${vinc.map(o=>`<option value="${esc(o.id)}">${esc(o.nomeObra)}</option>`).join('')}</select></label>
+      <label class="small">descrição<br><input type="text" class="avDesc" placeholder="ex.: Ajuste de projeto" style="width:200px;"></label>
+      <label class="small">valor<br><input type="text" inputmode="decimal" class="avVal val-input" placeholder="0,00" style="width:110px;"></label>
+      <button class="btn secondary avAdd" data-u="${cc}">+ Adicionar avulso</button></div>
+    ${lista?`<table style="margin-top:8px;"><tr><th>Mês</th><th>Obra</th><th>Serviço</th><th class="num">Valor</th><th>Situação</th><th></th></tr>${lista}</table>`:''}</div>`;
+}
 function confMensalHtml(u){
-  const rows=confMensalColab(u); if(!rows.length) return '';
+  const rows=confMensalColab(u); if(!rows.length) return avulsoHtml(u);
   const cc=esc(u); const hoje=new Date().toISOString().slice(0,7);
   const tD=rows.reduce((a,r)=>a+r.dev,0), tP=rows.reduce((a,r)=>a+r.pago,0), saldo=tD-tP;
   const cdU=DATA.colaboradores.find(x=>x.id===u)||{}; const pr=cdU.pagoRegistro||{};
@@ -1610,10 +1643,10 @@ function confMensalHtml(u){
   return `<div class="servbox" style="margin-top:10px;"><b>Conferência mensal — devido × pago</b>
     <p class="small" style="margin:2px 0 6px;">Digite o que você realmente pagou em cada mês. Se deixar em branco, vale o que foi baixado no sistema. Diferença positiva = falta pagar; negativa = pagou a mais (descontar nas próximas).</p>
     <table><tr><th>Mês</th><th class="num">Devido</th><th class="num">Pago (manual)</th><th class="num">Diferença do mês</th><th class="num">Acumulado</th><th>Situação</th><th>Registrar pagamento</th></tr>
-    ${rows.map(r=>`<tr><td>${esc(r.ym.slice(5)+'/'+r.ym.slice(0,4))}${r.ym===hoje?' <span class="small">(mês atual)</span>':''}</td><td class="num">${fmt(r.dev)}</td>
+    ${rows.map(r=>`<tr><td>${esc(r.ym.slice(5)+'/'+r.ym.slice(0,4))}${r.ym===hoje?' <span class="small">(mês atual)</span>':''}</td><td class="num">${fmt(r.dev)}${r.avu>0.005?`<div class="small">inclui avulso ${fmt(r.avu)}</div>`:''}</td>
       <td class="num"><input type="text" inputmode="decimal" class="val-input pagoMes" ${pr[r.ym]?'disabled title="Pagamento registrado — desfaça para alterar"':''} data-u="${cc}" data-m="${esc(r.ym)}" value="${r.man!==null?r.man.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}):''}" placeholder="${r.sis?r.sis.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}):'0,00'}" style="width:120px;text-align:right;"></td>
       <td class="num ${r.dif>0.005?'neg':r.dif<-0.005?'pos':''}">${fmt(r.dif)}</td><td class="num">${fmt(r.acum)}</td><td>${rotulo(r.acum)}</td><td>${regCell(u,r)}</td></tr>`).join('')}
-    <tr><td><b>Total</b></td><td class="num"><b>${fmt(tD)}</b></td><td class="num"><b>${fmt(tP)}</b></td><td class="num"><b>${fmt(saldo)}</b></td><td></td><td>${rotulo(saldo)}</td><td></td></tr></table></div>`;
+    <tr><td><b>Total</b></td><td class="num"><b>${fmt(tD)}</b></td><td class="num"><b>${fmt(tP)}</b></td><td class="num"><b>${fmt(saldo)}</b></td><td></td><td>${rotulo(saldo)}</td><td></td></tr></table></div>${avulsoHtml(u)}`;
 }
 function mediaColabHtml(u){
   const st=mediaColabEstado(u), cc=esc(u);
@@ -3871,6 +3904,8 @@ function attachMain(){
     document.querySelectorAll('.pagoMes').forEach(i=>i.onchange=e=>{ const c=DATA.colaboradores.find(x=>x.id===i.dataset.u); if(!c) return; c.pagoMes=c.pagoMes||{}; const t=String(e.target.value).trim(); if(t===''){ delete c.pagoMes[i.dataset.m]; } else { const v=parseBRL(t); if(isNaN(v)){ delete c.pagoMes[i.dataset.m]; } else c.pagoMes[i.dataset.m]=v; } if(!Object.keys(c.pagoMes).length) delete c.pagoMes; save(DATA); setTimeout(render,0); });
     document.querySelectorAll('.pmReg').forEach(b=>b.onclick=()=>{ const tr=b.closest('div'); const iso=brToIso(tr.querySelector('.pmData').value); if(!iso){ tr.querySelector('.pmData').style.borderColor='var(--bad)'; return; } if(registrarPagoMes(b.dataset.u,b.dataset.m,iso,tr.querySelector('.pmConta').value)){ save(DATA); } setTimeout(render,0); });
     document.querySelectorAll('.pmDesf').forEach(b=>b.onclick=()=>{ if(desfazerPagoMes(b.dataset.u,b.dataset.m)) save(DATA); setTimeout(render,0); });
+    document.querySelectorAll('.avAdd').forEach(b=>b.onclick=()=>{ const bx=b.closest('.servbox'); const v=parseBRL(bx.querySelector('.avVal').value); if(!(v>0)){ bx.querySelector('.avVal').style.borderColor='var(--bad)'; return; } if(adicionarAvulso(b.dataset.u,bx.querySelector('.avObra').value,bx.querySelector('.avMes').value,bx.querySelector('.avDesc').value,v)){ save(DATA); } setTimeout(render,0); });
+    document.querySelectorAll('.avDel').forEach(b=>b.onclick=()=>{ if(!confirm('Remover este serviço avulso?')) return; if(removerAvulso(b.dataset.u,b.dataset.o,b.dataset.n)) save(DATA); setTimeout(render,0); });
     document.querySelectorAll('.mcTrava').forEach(b=>b.onclick=()=>{ const t=b.dataset.t==='1'; if(!t&&!confirm('Destravar o grupo? Ele poderá ser alterado ou desfeito.')) return; const ids=b.dataset.o.split(','); let n=0; DATA.obras.forEach(o=>{ if(!ids.includes(o.id)) return; (o.equipe||[]).forEach(m=>{ if(m.colaboradorId===b.dataset.u&&m.media){ if(t) m.media.travado=true; else delete m.media.travado; n++; } }); }); logAcao((t?'Grupo de média travado: ':'Grupo de média destravado: ')+colabNome(b.dataset.u)+' ('+n+' vínculo(s))'); save(DATA); setTimeout(render,0); });
     document.querySelectorAll('.mcDesfazer').forEach(b=>b.onclick=()=>{ if(!confirm('Voltar essas obras para "por entrega"? (o grupo é desfeito e destravado; vínculos com pagamento já registrado não são alterados — desfaça o pagamento antes)')) return; const r=aplicarModeloPagamento(b.dataset.u,'entrega',{},b.dataset.o.split(',')); logAcao('Grupo de média desfeito: '+colabNome(b.dataset.u)+' ('+r.ok+' vínculo(s))'); if(r.bloq) alert(r.bloq+' vínculo(s) já têm pagamento registrado e não foram alterados. Para voltar a "por entrega", desfaça antes o pagamento do mês (conferência mensal).'); save(DATA); setTimeout(render,0); });
     document.querySelectorAll('.mcModo').forEach(i=>i.onchange=e=>{ const st=mediaColabEstado(i.dataset.u); st.modo=e.target.value; setTimeout(render,0); });
