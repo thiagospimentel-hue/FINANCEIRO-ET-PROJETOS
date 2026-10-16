@@ -523,7 +523,7 @@ async function sbBoot(){
 }
 
 // ===== Contratos / documentos da obra (somente administrador, modo Supabase) =====
-const DOC_TIPOS=['Contrato','Proposta','Aditivo','Outro'];
+const DOC_TIPOS=['Contrato','Proposta','Aditivo','Boleto','Nota fiscal','Comprovante','Outro'];
 function docNomeSeguro(n){ return String(n||'arquivo').normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^A-Za-z0-9_.-]+/g,'_').slice(-80)||'arquivo'; }
 function docPodeUsar(){ return SB.on && SESSION.role==='admin' && SB.tok; }
 async function docEnviar(obraId,file){
@@ -2147,7 +2147,14 @@ function formaCobrancaCell(obra,e){
     conta=contas.length ? `<select class="etConta" ${ref} style="margin-top:3px;"><option value="">— conta de recebimento —</option>${contas.map(c=>`<option value="${esc(c.id)}" ${c.id===et.contaId?'selected':''}>${esc(contaRotulo(c))}</option>`).join('')}</select>`
       : `<div class="small neg" style="margin-top:3px;">${obra.empresaId?'Cadastre as contas da empresa em Colaboradores.':'Defina a empresa da obra.'}</div>`;
   }
-  return sel+conta+`<div style="margin-top:3px;"><button class="btn secondary etCob" ${ref}>Dados p/ cobrança</button></div>`;
+  let anexos='';
+  if(docPodeUsar()){
+    const ds=(obra.documentos||[]).filter(d=>d.etapaId===et.id);
+    anexos=`<div style="margin-top:4px;">${ds.map(d=>`<div class="small" style="white-space:nowrap;">📎 ${esc(d.tipo)}: <a href="#" class="etDocVer" data-o="${esc(obra.id)}" data-d="${esc(d.id)}">${esc(d.nome.length>22?d.nome.slice(0,20)+'…':d.nome)}</a> <button class="btn danger etDocDel" data-o="${esc(obra.id)}" data-d="${esc(d.id)}" style="padding:0 6px;">x</button></div>`).join('')}
+      <select class="etDocTipo" data-o="${esc(obra.id)}" data-i="${e.idx}"><option>Boleto</option><option>Nota fiscal</option><option>Comprovante</option></select>
+      <input type="file" class="etDocArq" data-o="${esc(obra.id)}" data-i="${e.idx}" accept="application/pdf,image/png,image/jpeg" style="max-width:150px;"></div>`;
+  }
+  return sel+conta+`<div style="margin-top:3px;"><button class="btn secondary etCob" ${ref}>Dados p/ cobrança</button></div>`+anexos;
 }
 function resumoView(){
   const resumosPorObra=obrasVisiveis().map(obra=>({obra, etapas:resumoEtapasObra(obra), valorTotalObra:calcObra(obra).valorTotal}));
@@ -3277,6 +3284,14 @@ function attachMain(){
 
     document.querySelectorAll('.etForma').forEach(i=>i.onchange=e=>{ const o=DATA.obras.find(x=>x.id===i.dataset.o); const et=o&&o.etapasPagamento[i.dataset.i]; if(!et) return; et.formaPgto=e.target.value; if(!et.formaPgto) delete et.formaPgto; else if(!et.contaId){ const cs=contasDaEmpresa(o.empresaId); if(cs.length) et.contaId=cs[0].id; } save(DATA); setTimeout(render,0); });
     document.querySelectorAll('.etConta').forEach(i=>i.onchange=e=>{ const o=DATA.obras.find(x=>x.id===i.dataset.o); const et=o&&o.etapasPagamento[i.dataset.i]; if(!et) return; et.contaId=e.target.value; if(!et.contaId) delete et.contaId; save(DATA); setTimeout(render,0); });
+    document.querySelectorAll('.etDocArq').forEach(i=>i.onchange=async e=>{
+      const f=e.target.files[0]; if(!f) return; const o=DATA.obras.find(x=>x.id===i.dataset.o); const et=o&&o.etapasPagamento[i.dataset.i]; if(!et) return;
+      const tipo=(document.querySelector('.etDocTipo[data-o="'+o.id+'"][data-i="'+i.dataset.i+'"]')||{}).value||'Boleto';
+      try{ const path=await docEnviar(o.id,f); (o.documentos=o.documentos||[]).push({id:novoId('dc'),tipo,nome:f.name,path,etapaId:et.id,data:hojeISO()}); logAcao('Documento anexado à cobrança: '+tipo+' — '+o.nomeObra+' / '+et.nome); save(DATA); render(); }
+      catch(err){ alert('Não foi possível anexar: '+err.message); }
+    });
+    document.querySelectorAll('.etDocVer').forEach(a=>a.onclick=async ev=>{ ev.preventDefault(); const o=DATA.obras.find(x=>x.id===a.dataset.o); const dc=o&&(o.documentos||[]).find(x=>x.id===a.dataset.d); if(!dc) return; const w=window.open('about:blank','_blank'); try{ const u=await docLink(dc.path); if(w) w.location.href=u; else location.href=u; }catch(err){ if(w) w.close(); alert(err.message); } });
+    document.querySelectorAll('.etDocDel').forEach(b=>b.onclick=async()=>{ const o=DATA.obras.find(x=>x.id===b.dataset.o); const dc=o&&(o.documentos||[]).find(x=>x.id===b.dataset.d); if(!dc||!confirm('Remover "'+dc.nome+'"?')) return; o.documentos=o.documentos.filter(x=>x.id!==dc.id); await docApagarArquivo(dc.path); save(DATA); render(); });
     document.querySelectorAll('.etCob').forEach(b=>b.onclick=()=>abrirCobranca(b.dataset.o,b.dataset.i));
     // Campos de data digitados (dd/mm/aaaa): aplica máscara enquanto digita e converte p/ ISO ao sair do campo.
     document.querySelectorAll('.dateBr').forEach(i=>i.oninput=()=>maskDateBr(i));
