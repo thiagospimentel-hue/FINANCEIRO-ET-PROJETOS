@@ -1416,6 +1416,7 @@ function equipeGridHtml(obra,arr){
       ${cels}
       <td class="num"><b>${fmt(totalVal)}</b></td>
       <td style="white-space:nowrap;"><input type="number" step="0.1" min="0" class="pct-input gall" data-c="${esc(c)}" placeholder="%" style="width:54px;" title="Mesmo % em todas as disciplinas"><button class="btn secondary gallbtn" data-o="${oid}" data-c="${esc(c)}" title="Aplicar esse % em todas as disciplinas">todas</button>
+        ${padraoColab(c)?`<button class="btn secondary gpad" data-o="${oid}" data-c="${esc(c)}" title="Aplicar o percentual padrão do cadastro do colaborador">padrão</button>`:''}
         <button class="btn secondary gdet" data-o="${oid}" data-c="${esc(c)}">${aberto?'Ocultar':'Etapas'}</button>
         ${hist?`<button class="btn secondary gina" data-o="${oid}" data-c="${esc(c)}" title="Tem pagamentos; não pode ser removido">Inativar</button>`:`<button class="btn danger gdel" data-o="${oid}" data-c="${esc(c)}">x</button>`}</td>
     </tr>${det}`;
@@ -1525,6 +1526,20 @@ function mediaColabHtml(u){
     </div>
     ${resumo}
     <div class="row-flex" style="gap:8px;"><button class="btn mcAplicar" data-u="${cc}" data-m="media" ${tot>0?'':'disabled'}>Aplicar média nas obras marcadas</button><button class="btn secondary mcAplicar" data-u="${cc}" data-m="entrega" ${st.obras.length?'':'disabled'}>Voltar para "por entrega"</button></div></div>`;
+}
+// Percentual padrão do colaborador (fixado no cadastro): '' = % sobre o líquido total (Geral); demais chaves = tipoId da disciplina
+function padraoColab(u){ const c=DATA.colaboradores.find(x=>x.id===u); const p=c&&c.padrao; return p&&Object.keys(p).some(k=>+p[k]>0)?p:null; }
+function aplicarPadraoColab(obraId,colab,sobrescrever){
+  const obra=DATA.obras.find(o=>o.id===obraId), pd=padraoColab(colab); if(!obra||!pd) return 0;
+  const M=equipeGridModelo(obra); let n=0;
+  M.bases.forEach(b=>{
+    const tipo=b.id===''?'':(obra.servicos.find(sv=>sv.id===b.id)||{}).tipoId;
+    const v=+pd[tipo]||0; if(!(v>0)) return;
+    const mi=M.cel[colab+'|'+b.id];
+    if(mi!==undefined){ const m=obra.equipe[mi]; if(!sobrescrever||membroTemMovimento(m)||(m.pct===v)) return; }
+    equipeGridSet(obraId,colab,b.id,v); n++;
+  });
+  return n;
 }
 function equipeGridSet(obraId,colab,base,pct){
   const obra=DATA.obras.find(o=>o.id===obraId); if(!obra) return;
@@ -2813,6 +2828,14 @@ function colaboradoresView(){
         <div class="field"><label>Data de início</label><input type="date" class="colabCampo" data-u="${esc(u.id)}" data-f="dataInicio" value="${esc(u.dataInicio||'')}"></div>
         <div class="field"><label>Sócio</label><label class="small"><input type="checkbox" class="colabSocio" data-u="${esc(u.id)}" ${u.socio?'checked':''}> Recebe antecipação de lucros (recibo pela Pimentel; NF pela ET)</label></div>
       </div>
+      <div class="servbox" style="background:var(--accent-bg);margin-top:8px;"><b>Percentual padrão nas obras</b>
+        <p class="small" style="margin:2px 0 6px;">Fica fixado aqui: ao incluir ${esc(u.nome||'o colaborador')} na equipe de uma obra, estes percentuais são aplicados sozinhos (Geral = sobre o líquido total da obra; os demais, sobre o líquido de cada disciplina). Vazio = não participa.</p>
+        <div class="row-flex" style="flex-wrap:wrap;gap:10px;align-items:flex-end;">
+          <label class="small">Geral (líq. total)<br><input type="number" step="0.1" min="0" class="pct-input cpadrao" data-u="${esc(u.id)}" data-t="" value="${(u.padrao&&u.padrao[''])||''}" placeholder="—"></label>
+          ${DATA.tiposServico.map(t=>`<label class="small">${esc(t.nome)}<br><input type="number" step="0.1" min="0" class="pct-input cpadrao" data-u="${esc(u.id)}" data-t="${esc(t.id)}" value="${(u.padrao&&u.padrao[t.id])||''}" placeholder="—"></label>`).join('')}
+        </div>
+        ${padraoColab(u.id)?`<div class="row-flex" style="margin-top:8px;"><button class="btn secondary cpadAplicar" data-u="${esc(u.id)}">Aplicar nas obras em que já está</button><span class="small">Atualiza só vínculos sem aprovação ou pagamento.</span></div>`:''}
+      </div>
       ${acessoBox(u)}`:''}
       <div style="overflow-x:auto;"><table style="margin-top:10px;"><tr><th>Obra</th><th>Papel / etapa</th><th class="num">%</th><th class="num">Valor</th><th style="text-align:center;">Situação</th><th>Aprovação</th><th>Pagamento</th></tr>${linhasHtml}</table></div>
       ${mediaColabHtml(u.id)}
@@ -3277,8 +3300,9 @@ function attachMain(){
       if(!confirm('Liberar a retenção de '+colabNome(m.colaboradorId)+' ('+o.nomeObra+')? O valor passa a ser a pagar.')) return;
       e.concluido=true; e.data=hojeISO(); aprovarEntrega(o,m,e); logAcao('Retenção liberada — '+colabNome(m.colaboradorId)+' — '+o.nomeObra); save(DATA); render();
     });
+    document.querySelectorAll('.gpad').forEach(b=>b.onclick=()=>{ const n=aplicarPadraoColab(b.dataset.o,b.dataset.c,true); if(n){ logAcao('Percentual padrão reaplicado: '+colabNome(b.dataset.c)); save(DATA); } render(); });
     document.querySelectorAll('.gdet').forEach(b=>b.onclick=()=>{ const k=b.dataset.o+'|'+b.dataset.c; GRID_ABERTO[k]=!GRID_ABERTO[k]; render(); });
-    document.querySelectorAll('.gadd').forEach(b=>b.onclick=()=>{ const sel=document.querySelector('.gaddsel[data-o="'+b.dataset.o+'"]'); if(!sel||!sel.value) return; (GRID_EXTRA[b.dataset.o]=GRID_EXTRA[b.dataset.o]||[]).push(sel.value); render(); });
+    document.querySelectorAll('.gadd').forEach(b=>b.onclick=()=>{ const sel=document.querySelector('.gaddsel[data-o="'+b.dataset.o+'"]'); if(!sel||!sel.value) return; (GRID_EXTRA[b.dataset.o]=GRID_EXTRA[b.dataset.o]||[]).push(sel.value); const n=aplicarPadraoColab(b.dataset.o,sel.value,false); if(n){ logAcao('Percentual padrão aplicado: '+colabNome(sel.value)+' em '+(DATA.obras.find(o=>o.id===b.dataset.o)||{}).nomeObra); save(DATA); } render(); });
     document.querySelectorAll('.gdel').forEach(b=>b.onclick=()=>{
       const o=DATA.obras.find(x=>x.id===b.dataset.o); if(!o) return;
       if((o.equipe||[]).some(m=>m.colaboradorId===b.dataset.c&&equipeTemHistorico(m))) return;
@@ -3640,6 +3664,8 @@ function attachMain(){
     document.querySelectorAll('.togglecolab').forEach(b=>b.onclick=()=>{OPEN_COLAB=OPEN_COLAB===b.dataset.u?null:b.dataset.u;render();});
     document.querySelectorAll('.gerarrecibo').forEach(b=>b.onclick=()=>{ abrirReciboColaborador(b.dataset.u, b.dataset.mes, b.dataset.e); });
     document.querySelectorAll('.gerarnf').forEach(b=>b.onclick=()=>{ abrirSolicitacaoNF(b.dataset.u, b.dataset.mes, b.dataset.e); });
+    document.querySelectorAll('.cpadrao').forEach(i=>i.onchange=e=>{ const u=DATA.colaboradores.find(x=>x.id===i.dataset.u); if(!u) return; u.padrao=u.padrao||{}; const v=Math.max(0,Math.round((parseFloat(e.target.value)||0)*1e4)/1e4); if(v>0) u.padrao[i.dataset.t]=v; else delete u.padrao[i.dataset.t]; if(!Object.keys(u.padrao).length) delete u.padrao; save(DATA); setTimeout(render,0); });
+    document.querySelectorAll('.cpadAplicar').forEach(b=>b.onclick=()=>{ let n=0,ob=0; DATA.obras.forEach(o=>{ if((o.equipe||[]).some(m=>m.colaboradorId===b.dataset.u&&!m.inativo)){ const k=aplicarPadraoColab(o.id,b.dataset.u,true); if(k){ n+=k; ob++; } } }); logAcao('Percentual padrão aplicado às obras: '+colabNome(b.dataset.u)+' ('+ob+' obra(s))'); save(DATA); alert(n?('Padrão aplicado em '+ob+' obra(s).'):'Nada a alterar: os vínculos já seguem o padrão ou têm aprovação/pagamento.'); setTimeout(render,0); });
     document.querySelectorAll('.colabSocio').forEach(c=>c.onchange=e=>{const u=DATA.colaboradores.find(x=>x.id===c.dataset.u); if(u){u.socio=e.target.checked; save(DATA); render();}});
     document.querySelectorAll('.colabCampo').forEach(i=>i.onchange=e=>{const u=DATA.colaboradores.find(x=>x.id===i.dataset.u);u[i.dataset.f]=e.target.value;save(DATA);render();});
     document.querySelectorAll('.delcolab').forEach(b=>b.onclick=()=>{
