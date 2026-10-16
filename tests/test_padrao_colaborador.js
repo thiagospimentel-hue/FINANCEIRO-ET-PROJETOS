@@ -23,5 +23,8 @@ const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwrig
   await p.click('.cpadAplicar[data-u="u1"]'); await p.waitForTimeout(200);
   const r2=await p.evaluate(()=>DATA.obras[1].equipe.filter(m=>m.colaboradorId==='u1').map(m=>m.baseIds.join()+':'+m.pct).sort());
   T('botão aplica o padrão nas obras onde já está', JSON.stringify(r2)==='["so2a:7.5","so2b:7.5"]', r2);
+  await set('t1','9'); await set('t5','9');
+  const r3=await p.evaluate(()=>DATA.obras.map(o=>o.equipe.filter(m=>m.colaboradorId==='u1').map(m=>m.pct).join()).join('|'));
+  T('mudar % no colaborador atualiza as obras vinculadas sozinho', r3==='9,9|9,9', r3);
   T('sem erros', errs.length===0, errs); console.log(ok+' ok, '+ko+' falhas'); await b.close(); process.exit(ko?1:0);
 })();
