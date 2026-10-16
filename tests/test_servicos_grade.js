@@ -31,6 +31,11 @@ const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwrig
   T('valor da disciplina editado na grade', await p.evaluate(()=>DATA.obras[0].servicos[1].valorTotal)===150000);
   const chk2=await p.evaluate(()=>{ const r=resumoGridObra(DATA.obras[0]); return [r.totCusto, calcObra(DATA.obras[0]).despTotal]; });
   T('resumo continua batendo após edições', Math.abs(chk2[0]-chk2[1])<0.01, chk2);
+  const rt=await p.evaluate(()=>{ const sv=DATA.obras[0].servicos; RESUMO_RATEIO=true; const a=resumoGridObra(DATA.obras[0]); RESUMO_RATEIO=false; const b=resumoGridObra(DATA.obras[0]); RESUMO_RATEIO=true; return [a.html.includes('>Geral<'), b.html.includes('>Geral<'), a.totCusto, b.totCusto, a.lucroTot, b.lucroTot, a.html.includes('Quanto cobrar')]; });
+  T('com rateio some a coluna Geral e os totais não mudam', rt[0]===false && rt[1]===true && Math.abs(rt[2]-rt[3])<0.01 && Math.abs(rt[4]-rt[5])<0.01 && rt[6], rt);
+  await p.evaluate(()=>{ render(); });
+  await p.evaluate(()=>{ const i=document.querySelector('.resAlvo'); i.value='40'; i.dispatchEvent(new Event('change')); }); await p.waitForTimeout(150);
+  T('margem-alvo salva na obra', await p.evaluate(()=>DATA.obras[0].margemAlvo)===40);
   await p.click('.servmodo[data-m="lista"]'); T('visão detalhada preservada', await p.locator('.dpct').count()>0);
   T('sem erros', errs.length===0, errs); console.log(ok+' ok, '+ko+' falhas'); await b.close(); process.exit(ko?1:0);
 })();

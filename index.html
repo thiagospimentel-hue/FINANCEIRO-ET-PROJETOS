@@ -1553,9 +1553,14 @@ function servSetDespesa(obra,sid,nome,pct){
   else if(i>=0) s.despesas.splice(i,1);
 }
 // Resumo da obra: linhas = colaboradores e despesas; colunas = disciplinas (+ Geral e Total)
+let RESUMO_RATEIO=true;
 function resumoGridObra(obra){
   const sv=obra.servicos||[]; const cols=sv.map(s=>({id:s.id,nome:tipoNome(s.tipoId)})); const geral='__geral';
-  const todasCols=cols.concat([{id:geral,nome:'Geral'}]);
+  const liqS={}; sv.forEach(s=>liqS[s.id]=calcServico(s).liquido); const somaLiq=sv.reduce((a,s)=>a+liqS[s.id],0);
+  const ratear=RESUMO_RATEIO && somaLiq>0;
+  const todasCols=ratear?cols.slice():cols.concat([{id:geral,nome:'Geral'}]);
+  // rateio: o que é "Geral" (equipe sobre o líquido total, ART, materiais…) é distribuído pelo peso do líquido de cada disciplina
+  const ajusta=l=>{ if(ratear && l.v[geral]){ const g=l.v[geral]; delete l.v[geral]; sv.forEach(s=>{ l.v[s.id]=(l.v[s.id]||0)+g*liqS[s.id]/somaLiq; }); } return l; };
   const linhasEq={}, ordemEq=[];
   (obra.equipe||[]).forEach(m=>{
     const v=equipeMembroValor(obra,m); if(!v) return;
@@ -1569,7 +1574,7 @@ function resumoGridObra(obra){
   const linhasObra=[]; (obra.despesasObra||[]).forEach(d=>{ const v=despObraValor(obra,d); const col=despObraServ(obra,d)?d.servicoId:geral; if(v) linhasObra.push({nome:d.nome||'Despesa da obra',v:{[col]:v}}); });
   const tot={}; todasCols.forEach(c=>tot[c.id]=0);
   const soma=l=>todasCols.reduce((a,c)=>a+(l.v[c.id]||0),0);
-  const mk=(l,rotulo)=>{ todasCols.forEach(c=>tot[c.id]+=(l.v[c.id]||0)); return `<tr><td>${rotulo}</td>${todasCols.map(c=>`<td class="num">${l.v[c.id]?fmt(l.v[c.id]):'—'}</td>`).join('')}<td class="num"><b>${fmt(soma(l))}</b></td></tr>`; };
+  const mk=(l,rotulo)=>{ ajusta(l); todasCols.forEach(c=>tot[c.id]+=(l.v[c.id]||0)); return `<tr><td>${rotulo}</td>${todasCols.map(c=>`<td class="num">${l.v[c.id]?fmt(l.v[c.id]):'—'}</td>`).join('')}<td class="num"><b>${fmt(soma(l))}</b></td></tr>`; };
   const sec=t=>`<tr><td colspan="${todasCols.length+2}" style="font-weight:600;background:var(--accent-bg);">${t}</td></tr>`;
   const rEq=ordemEq.map(k=>mk(linhasEq[k],esc(linhasEq[k].nome)+(linhasEq[k].papel?` <span class="small">${esc(linhasEq[k].papel)}</span>`:''))).join('');
   const rDe=ordemD.map(k=>mk(linhasDesp[k],esc(k))).join('')+linhasObra.map(l=>mk(l,esc(l.nome)+' <span class="small">(obra)</span>')).join('');
@@ -1577,6 +1582,17 @@ function resumoGridObra(obra){
   const totCusto=todasCols.reduce((a,c)=>a+tot[c.id],0), totLiq=sv.reduce((a,s)=>a+liq[s.id],0), totBruto=sv.reduce((a,s)=>a+bruto[s.id],0);
   const lucro={}; todasCols.forEach(c=>lucro[c.id]=(liq[c.id]||0)-tot[c.id]);
   const lucroTot=totLiq-totCusto;
+  const alvo=(obra.margemAlvo===undefined||obra.margemAlvo===null||obra.margemAlvo==='')?30:+obra.margemAlvo;
+  let alvoHtml='';
+  if(ratear){
+    const need={}, dif={}; let nT=0,dT=0;
+    sv.forEach(s=>{ const den=1-((s.imposto||0)/100)-(alvo/100); need[s.id]=den>0.0001?tot[s.id]/den:null; if(need[s.id]!==null){ dif[s.id]=need[s.id]-bruto[s.id]; nT+=need[s.id]; dT+=dif[s.id]; } });
+    const completo=sv.every(s=>need[s.id]!==null);
+    const cel=v=>v===null?'—':(v>=0.5?`<span class="neg">+${fmt(v)}</span>`:(v<=-0.5?`<span class="pos">${fmt(v)}</span>`:'—'));
+    alvoHtml=`<div style="overflow-x:auto;margin-top:8px;"><table><tr><td colspan="${todasCols.length+2}" style="font-weight:600;background:var(--accent-bg);">Quanto cobrar? — margem-alvo sobre o bruto: <input type="number" step="1" min="0" max="90" class="pct-input resAlvo" data-o="${esc(obra.id)}" value="${alvo}">%</td></tr>
+      <tr><td>Valor bruto necessário para a margem-alvo</td>${todasCols.map(c=>`<td class="num">${need[c.id]!==null&&need[c.id]!==undefined?fmt(need[c.id]):'—'}</td>`).join('')}<td class="num">${completo?fmt(nT):'—'}</td></tr>
+      <tr><td>Diferença para o contratado <span class="small">(+ = cobraria a mais · negativo = folga)</span></td>${todasCols.map(c=>`<td class="num">${cel(dif[c.id]===undefined?null:dif[c.id])}</td>`).join('')}<td class="num">${completo?cel(dT):'—'}</td></tr></table></div>`;
+  }
   const html=`<h3>Resumo da obra — colaboradores e despesas por disciplina</h3>
     <div style="overflow-x:auto;"><table><tr><th></th>${todasCols.map(c=>`<th class="num">${esc(c.nome)}</th>`).join('')}<th class="num">Total</th></tr>
     <tr><td>Valor contratado (bruto)</td>${todasCols.map(c=>`<td class="num">${bruto[c.id]?fmt(bruto[c.id]):'—'}</td>`).join('')}<td class="num">${fmt(totBruto)}</td></tr>
@@ -1585,7 +1601,9 @@ function resumoGridObra(obra){
     <tr style="font-weight:600;"><td>Custo total</td>${todasCols.map(c=>`<td class="num">${tot[c.id]?fmt(tot[c.id]):'—'}</td>`).join('')}<td class="num">${fmt(totCusto)}</td></tr>
     <tr style="font-weight:700;"><td>Lucro</td>${todasCols.map(c=>`<td class="num ${lucro[c.id]<0?'neg':'pos'}">${(liq[c.id]||tot[c.id])?fmt(lucro[c.id]):'—'}</td>`).join('')}<td class="num ${lucroTot<0?'neg':'pos'}">${fmt(lucroTot)}</td></tr>
     <tr><td>Margem sobre o bruto</td>${todasCols.map(c=>`<td class="num">${bruto[c.id]?pct(lucro[c.id]/bruto[c.id]*100):'—'}</td>`).join('')}<td class="num">${totBruto?pct(lucroTot/totBruto*100):'—'}</td></tr></table></div>
-    <p class="small">"Geral" = equipe com base no líquido total da obra e despesas da obra (ART, materiais…), que não pertencem a uma disciplina específica.</p>`;
+    ${alvoHtml}
+    <label class="small" style="display:block;margin-top:6px;"><input type="checkbox" class="resRateio" ${RESUMO_RATEIO?'checked':''}> Ratear o "Geral" entre as disciplinas, proporcional ao líquido de cada uma (para ver o lucro real por disciplina)</label>
+    <p class="small">${ratear?'Equipe sobre o líquido total da obra e despesas da obra (ART, materiais…) foram distribuídas entre as disciplinas pelo peso do líquido de cada uma.':'"Geral" = equipe com base no líquido total da obra e despesas da obra (ART, materiais…), que não pertencem a uma disciplina específica.'}</p>`;
   return {html,totCusto,lucroTot};
 }
 function colabOptions(selectedId){
@@ -3133,6 +3151,8 @@ function attachMain(){
       logAcao('Aditivo excluído em '+(obra.nomeObra||'obra')+(a?': '+a.desc:''));
       save(DATA); render();
     });
+    document.querySelectorAll('.resRateio').forEach(c=>c.onchange=e=>{ RESUMO_RATEIO=e.target.checked; render(); });
+    document.querySelectorAll('.resAlvo').forEach(i=>i.onchange=e=>{ const o=DATA.obras.find(x=>x.id===i.dataset.o); if(!o) return; o.margemAlvo=Math.max(0,Math.min(90,parseFloat(e.target.value)||0)); save(DATA); setTimeout(render,0); });
     document.querySelectorAll('.servmodo').forEach(b=>b.onclick=()=>{SERV_MODO=b.dataset.m;render();});
     document.querySelectorAll('.sgtipo').forEach(sel=>sel.onchange=e=>{DATA.obras.forEach(o=>o.servicos.forEach(s=>{if(s.id===sel.dataset.s)s.tipoId=e.target.value;}));save(DATA);setTimeout(render,0);});
     document.querySelectorAll('.sgab').forEach(b=>b.onclick=()=>{SG_ABERTO[b.dataset.s]=!SG_ABERTO[b.dataset.s];render();});
