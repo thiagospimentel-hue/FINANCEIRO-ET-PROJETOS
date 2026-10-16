@@ -105,7 +105,7 @@ const results=[]; const T=(nome,ok,det)=>{ results.push([ok,nome,det]); console.
   await A.evaluate(()=>sbCarregar(false)); await A.waitForTimeout(500);
   T('admin recebeu a marcação da Ana', await A.evaluate(()=>DATA.obras[0].equipe[0].etapas[0].concluido===true));
   // ---- pagamento parcial ----
-  await A.evaluate(()=>{ const e=DATA.obras[0].equipe[0].etapas[0]; e.aprovado=true; e.data='2026-10-02'; TAB='colaboradores'; OPEN_COLAB='u1'; save(DATA); render(); });
+  await A.evaluate(()=>{ const e=DATA.obras[0].equipe[0].etapas[0]; e.aprovado=true; e.data='2026-10-02'; TAB='colaboradores'; OPEN_COLAB='u1'; COLAB_OBRA_ABERTA['u1|'+DATA.obras[0].id]=true; save(DATA); render(); });
   await A.waitForTimeout(1200);
   const bxInfo=await A.evaluate(()=>{ const i=document.querySelector('.bxVal'); return i?i.value:null; });
   T('widget de pagamento aparece com o saldo', !!bxInfo, bxInfo);

@@ -903,7 +903,7 @@ let FILTER_STATUS='';
 let FILTER_FAT_MES='';
 let FILTER_FAT_STATUS='';
 let FILTER_DASH_BUSCA='', FILTER_DASH_STATUS='', FILTER_DASH_EMP='';
-let FILTER_DASH_SEL=[];
+let FILTER_DASH_SEL=[]; let COLAB_OBRA_ABERTA={};
 let FILTER_CONTAS='';
 let FILTER_CONTAS_MES=new Date().toISOString().slice(0,7); // '' = todos os meses
 let FILTER_EMPRESA='';
@@ -2779,7 +2779,17 @@ function colaboradoresView(){
       const pagto = l.tipo==='despesa' ? `<div class="small">Vencimento: ${l.pagarEm?isoToBr(l.pagarEm):'sem data (defina na obra)'}</div>`+baixaWidget('despobra',l.obraId,l.despId,'',l.saldo,l.baixas,'Pagar')
         : l.aprovado ? `<div class="small">Pagar até: <input type="text" inputmode="numeric" class="eqPagarEm dateBr" data-o="${esc(l.obraId)}" data-mi="${l.equipeIdx}" data-ei="${l.etapaIdx}" value="${isoToBr(l.pagarEm)}" placeholder="dd/mm/aaaa" maxlength="10" style="width:100px;"></div>`+baixaWidget('equipe',l.obraId,l.equipeIdx,l.etapaIdx,l.saldo,l.baixas,'Pagar') : '';
       return `<tr><td>${esc(l.obra)}</td><td>${esc(l.papel)}</td><td class="num">${pct(l.p)}</td><td class="num">${fmt(l.val)}</td><td style="text-align:center;"><span class="badge badge-${EQ_SIT_BADGE[l.sit]}">${EQ_SIT_LABEL[l.sit]}</span></td><td>${aprov}</td><td style="min-width:240px;">${pagto}</td></tr>`;
-    }).join('') || '<tr><td colspan="7" class="small">Nenhuma atribuição ainda.</td></tr>';
+    });
+    // resumo por obra (uma linha por obra; as etapas ficam recolhidas)
+    const gObras=[]; const gMap={};
+    linhas.forEach((l,i)=>{ let g=gMap[l.obraId]; if(!g){ g=gMap[l.obraId]={obraId:l.obraId,obra:l.obra,val:0,aprov:0,pago:0,saldo:0,rows:[]}; gObras.push(g); }
+      g.val+=l.val; if(l.aprovado) g.aprov+=l.val; g.pago+=l.pago; g.saldo+=l.saldo; g.rows.push(linhasHtml[i]); });
+    const resumoObras=gObras.map(g=>{
+      const ob=DATA.obras.find(o=>o.id===g.obraId); const md=ob&&(ob.equipe||[]).find(m=>m.colaboradorId===u.id&&m.modelo==='media'&&!m.inativo);
+      const ab=!!COLAB_OBRA_ABERTA[u.id+'|'+g.obraId];
+      return `<tr><td><b>${esc(g.obra)}</b>${md?`<div class="small">média mensal ${esc(md.media.meses)}x desde ${esc(md.media.inicio)}</div>`:''}</td><td class="num">${fmt(g.val)}</td><td class="num">${fmt(g.aprov)}</td><td class="num pos">${fmt(g.pago)}</td><td class="num ${g.saldo>0.005?'neg':''}"><b>${fmt(g.saldo)}</b></td><td><button class="btn secondary cobraEt" data-u="${esc(u.id)}" data-o="${esc(g.obraId)}">${ab?'Ocultar etapas':'Ver etapas'}</button></td></tr>`
+        +(ab?`<tr><td colspan="6" style="padding:0 0 10px 0;"><div style="overflow-x:auto;"><table><tr><th>Obra</th><th>Papel / etapa</th><th class="num">%</th><th class="num">Valor</th><th style="text-align:center;">Situação</th><th>Aprovação</th><th>Pagamento</th></tr>${g.rows.join('')}</table></div></td></tr>`:'');
+    }).join('')||'<tr><td colspan="6" class="small">Nenhuma atribuição ainda.</td></tr>';
     // agrupa os itens concluídos por mês/ano para fechamento de folha
     const porMes={};
     linhas.forEach(l=>{
@@ -2837,7 +2847,7 @@ function colaboradoresView(){
         ${padraoColab(u.id)?`<div class="row-flex" style="margin-top:8px;"><button class="btn secondary cpadAplicar" data-u="${esc(u.id)}">Aplicar nas obras em que já está</button><span class="small">Atualiza só vínculos sem aprovação ou pagamento.</span></div>`:''}
       </div>
       ${acessoBox(u)}`:''}
-      <div style="overflow-x:auto;"><table style="margin-top:10px;"><tr><th>Obra</th><th>Papel / etapa</th><th class="num">%</th><th class="num">Valor</th><th style="text-align:center;">Situação</th><th>Aprovação</th><th>Pagamento</th></tr>${linhasHtml}</table></div>
+      <div style="overflow-x:auto;"><table style="margin-top:10px;"><tr><th>Obra</th><th class="num">Contratado</th><th class="num">Aprovado</th><th class="num">Pago</th><th class="num">Saldo a pagar</th><th></th></tr>${resumoObras}</table></div>
       ${mediaColabHtml(u.id)}
       ${mesesHtml?`<h3 style="margin:12px 0 2px;">Fechamento por mês</h3>${mesesHtml}`:''}
       <div class="row-flex" style="justify-content:flex-end;gap:16px;margin-top:6px;">
@@ -3666,6 +3676,7 @@ function attachMain(){
     document.querySelectorAll('.gerarnf').forEach(b=>b.onclick=()=>{ abrirSolicitacaoNF(b.dataset.u, b.dataset.mes, b.dataset.e); });
     document.querySelectorAll('.cpadrao').forEach(i=>i.onchange=e=>{ const u=DATA.colaboradores.find(x=>x.id===i.dataset.u); if(!u) return; u.padrao=u.padrao||{}; const v=Math.max(0,Math.round((parseFloat(e.target.value)||0)*1e4)/1e4); if(v>0) u.padrao[i.dataset.t]=v; else delete u.padrao[i.dataset.t]; if(!Object.keys(u.padrao).length) delete u.padrao; save(DATA); setTimeout(render,0); });
     document.querySelectorAll('.cpadAplicar').forEach(b=>b.onclick=()=>{ let n=0,ob=0; DATA.obras.forEach(o=>{ if((o.equipe||[]).some(m=>m.colaboradorId===b.dataset.u&&!m.inativo)){ const k=aplicarPadraoColab(o.id,b.dataset.u,true); if(k){ n+=k; ob++; } } }); logAcao('Percentual padrão aplicado às obras: '+colabNome(b.dataset.u)+' ('+ob+' obra(s))'); save(DATA); alert(n?('Padrão aplicado em '+ob+' obra(s).'):'Nada a alterar: os vínculos já seguem o padrão ou têm aprovação/pagamento.'); setTimeout(render,0); });
+    document.querySelectorAll('.cobraEt').forEach(b=>b.onclick=()=>{ const k=b.dataset.u+'|'+b.dataset.o; COLAB_OBRA_ABERTA[k]=!COLAB_OBRA_ABERTA[k]; render(); });
     document.querySelectorAll('.colabSocio').forEach(c=>c.onchange=e=>{const u=DATA.colaboradores.find(x=>x.id===c.dataset.u); if(u){u.socio=e.target.checked; save(DATA); render();}});
     document.querySelectorAll('.colabCampo').forEach(i=>i.onchange=e=>{const u=DATA.colaboradores.find(x=>x.id===i.dataset.u);u[i.dataset.f]=e.target.value;save(DATA);render();});
     document.querySelectorAll('.delcolab').forEach(b=>b.onclick=()=>{
