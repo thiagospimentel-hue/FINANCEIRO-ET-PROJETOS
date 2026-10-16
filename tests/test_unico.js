@@ -24,5 +24,10 @@ const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwrig
   const pg=await p.evaluate(()=>Math.round(baixaTotal(DATA.obras[1].equipe[0].etapas[0])));
   T('pagamento do mês quita o único', pg===2500, pg);
   T('obra paga não pode mudar de forma', await p.evaluate(()=>{ const r=aplicarModeloPagamento('u1','entrega',{},['o2']); return r.bloq===1&&r.ok===0; }));
+  // obra em média com parcelas já pagas -> único preserva o pago
+  await p.evaluate(()=>{ DATA.obras.push((()=>{const o=JSON.parse(JSON.stringify(DATA.obras[1])); o.id='o3'; o.nomeObra='Obra o3'; o.equipe[0].id='q3'; o.equipe[0].etapas=etapasCoordPadrao(); delete o.equipe[0].modelo; return o;})());
+    aplicarModeloPagamento('u1','media',{inicio:'2026-06',meses:5,ret:0,dia:5,fim:'2026-10'},['o3']); const m=DATA.obras[2].equipe[0]; m.media.travado=false; delete m.media.travado; const e=m.etapas[0]; e.baixas=[{id:'b1',tipo:'saida',valor:500,data:'2026-06-05'}]; });
+  const r3=await p.evaluate(()=>{ const r=aplicarModeloPagamento('u1','unico',{unicoMes:'2026-10',dia:15},['o3']); const m=DATA.obras[2].equipe[0]; const u=m.etapas.filter(e=>e.unico); return {r,mod:m.modelo,n:m.etapas.length,pct:u[0]&&Math.round(equipeMembroValor(DATA.obras[2],m)*u[0].pct/100)}; });
+  T('conversão preserva parcela paga e cria único com o resto', r3.r.ok===1&&r3.mod==='unico'&&r3.n===2&&r3.pct===2000, r3);
   T('sem erros', errs.length===0, errs); console.log(ok+' ok, '+ko+' falhas'); await b.close(); process.exit(ko?1:0);
 })();

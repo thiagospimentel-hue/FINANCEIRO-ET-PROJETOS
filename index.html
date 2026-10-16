@@ -1498,6 +1498,21 @@ function remarcarMediaPreservando(o,m,cfg){
   m.etapas=mens.concat(retNova?[retNova]:[]).concat(avul);
   return true;
 }
+// Converte para pagamento único preservando parcelas já pagas: o que falta (total − pago) vira uma única etapa no mês escolhido
+function converterUnicoPreservando(o,m,cfg){
+  const total=equipeMembroValor(o,m); if(!(total>0)) return false;
+  if((m.etapas||[]).some(e=>e.unico)) return false;
+  const kept=(m.etapas||[]).filter(e=>(e.baixas||[]).length>0&&!e.retencao);
+  if((m.etapas||[]).some(e=>e.retencao&&((e.baixas||[]).length>0||e.aprovado&&!e.auto))) return false;
+  if((m.etapas||[]).some(e=>!e.retencao&&!e.mensal&&((e.baixas||[]).length>0||e.aprovado&&!e.auto))) return false;
+  const valKept=kept.reduce((a,e)=>a+valorEquipeEtapa(o,m,e),0), resto=total-valKept;
+  const ym=/^\d{4}-\d{2}$/.test(cfg.unicoMes||'')?cfg.unicoMes:hojeISO().slice(0,7); const [y,mm]=ym.split('-').map(Number);
+  const pe=ym+'-'+String(Math.min(28,Math.max(1,+cfg.dia||5))).padStart(2,'0');
+  kept.forEach(e=>{ if(!temValor(e.valorFixo)) e.valorFixo=valorEquipeEtapa(o,m,e); });
+  m.etapas=kept.slice(); delete m.media; m.modelo='unico';
+  if(resto>0.01) m.etapas.push({nome:'Pagamento único — '+MES_ABREV[mm-1]+'/'+y,pct:Math.round(resto/total*100*1e4)/1e4,unico:true,mensal:false,pagarEm:pe,data:pe,concluido:false,aprovado:true,auto:true,baixas:[]});
+  return true;
+}
 function aplicarModeloPagamento(colabId,modo,cfg,obraId){
   let ok=0,bloq=0;
   DATA.obras.forEach(o=>{
@@ -1507,6 +1522,7 @@ function aplicarModeloPagamento(colabId,modo,cfg,obraId){
       const jaMedia=m.modelo==='media';
       if(m.media&&m.media.travado&&!cfg.destravar){ bloq++; return; }
       if(jaMedia&&modo==='media'&&(m.etapas||[]).some(e=>(e.baixas||[]).length>0)){ if(remarcarMediaPreservando(o,m,cfg)) ok++; else bloq++; return; }
+      if(modo==='unico'&&(m.etapas||[]).some(e=>(e.baixas||[]).length>0)){ if(converterUnicoPreservando(o,m,cfg)) ok++; else bloq++; return; }
       if(membroTemMovimento(m)){ bloq++; return; }
       if(modo==='media'){ m.modelo='media'; m.media={inicio:cfg.inicio,meses:+cfg.meses,ret:+cfg.ret,dia:+cfg.dia,travado:true}; if(cfg.fim) m.media.fim=cfg.fim; if(cfg.grupoId) m.media.grupoId=cfg.grupoId; if(cfg.grupo) m.media.grupo=cfg.grupo; m.etapas=mediaEtapas(cfg); }
       else if(modo==='unico'){ const ym=/^\d{4}-\d{2}$/.test(cfg.unicoMes||'')?cfg.unicoMes:hojeISO().slice(0,7); const [y,mm]=ym.split('-').map(Number); const pe=ym+'-'+String(Math.min(28,Math.max(1,+cfg.dia||5))).padStart(2,'0');
@@ -1554,7 +1570,7 @@ function mediaColabEstado(u){
 function confMensalColab(u){
   const c=DATA.colaboradores.find(x=>x.id===u); const pm=(c&&c.pagoMes)||{}; const mp={};
   DATA.obras.forEach(o=>(o.equipe||[]).forEach(m=>{ if(m.colaboradorId!==u||m.inativo) return;
-    (m.etapas||[]).forEach(e=>{ if(!((e.mensal&&m.modelo==='media')||e.unico)||!e.pagarEm) return; const ym=e.pagarEm.slice(0,7); const r=mp[ym]=mp[ym]||{ym,dev:0,sis:0,avu:0}; const vv=valorEquipeEtapa(o,m,e); r.dev+=vv; if(e.unico) r.avu=(r.avu||0)+vv; r.sis+=baixaTotal(e); (r.det=r.det||[]).push({emp:o.empresaId||'',obra:o.nomeObra,dev:vv}); }); }));
+    (m.etapas||[]).forEach(e=>{ if(!((e.mensal&&(m.modelo==='media'||m.modelo==='unico'))||e.unico)||!e.pagarEm) return; const ym=e.pagarEm.slice(0,7); const r=mp[ym]=mp[ym]||{ym,dev:0,sis:0,avu:0}; const vv=valorEquipeEtapa(o,m,e); r.dev+=vv; if(e.unico) r.avu=(r.avu||0)+vv; r.sis+=baixaTotal(e); (r.det=r.det||[]).push({emp:o.empresaId||'',obra:o.nomeObra,dev:vv}); }); }));
   Object.keys(pm).forEach(ym=>{ mp[ym]=mp[ym]||{ym,dev:0,sis:0}; });
   const rows=Object.values(mp).sort((a,b)=>a.ym<b.ym?-1:1); let acum=0;
   rows.forEach(r=>{ r.man=pm[r.ym]!==undefined&&pm[r.ym]!==''?+pm[r.ym]:null; r.pago=r.man!==null?r.man:r.sis; r.dif=r.dev-r.pago; acum+=r.dif; r.acum=acum; });
@@ -1575,7 +1591,7 @@ function mediaMesEmp(uid){
 }
 function etapasMesMedia(uid,ym){
   const out=[]; DATA.obras.forEach(o=>(o.equipe||[]).forEach((m,mi)=>{ if(m.colaboradorId!==uid||m.inativo) return;
-    (m.etapas||[]).forEach((e,ei)=>{ if(((e.mensal&&m.modelo==='media')||e.unico)&&e.pagarEm&&e.pagarEm.slice(0,7)===ym) out.push({o,m,mi,e,ei,v:valorEquipeEtapa(o,m,e)}); }); }));
+    (m.etapas||[]).forEach((e,ei)=>{ if(((e.mensal&&(m.modelo==='media'||m.modelo==='unico'))||e.unico)&&e.pagarEm&&e.pagarEm.slice(0,7)===ym) out.push({o,m,mi,e,ei,v:valorEquipeEtapa(o,m,e)}); }); }));
   return out;
 }
 // Registra o pagamento do mês: baixa nas parcelas (rateio pelo devido) + saída no caixa
@@ -3887,6 +3903,7 @@ function attachMain(){
       const cfg={...st.cfg,meses:mesesPeriodo(st.cfg.inicio,st.cfg.fim)}; if(b.dataset.m==='media'){ cfg.grupoId=novoId('gr'); cfg.grupo=(st.cfg.grupo||'').trim()||('Grupo '+cfg.inicio+' a '+cfg.fim); }
       const r=aplicarModeloPagamento(b.dataset.u,b.dataset.m,cfg,st.obras.slice());
       logAcao('Forma de pagamento ('+(b.dataset.m==='media'?'média mensal, grupo '+cfg.grupo+', '+cfg.inicio+' a '+cfg.fim:b.dataset.m==='unico'?'pagamento único em '+(cfg.unicoMes||'')+', não parcelado':'por entrega')+') aplicada a '+colabNome(b.dataset.u)+' em '+r.ok+' vínculo(s)');
+      if(b.dataset.m==='unico'&&r.bloq) alert(r.bloq+' vínculo(s) não foram alterados: grupo travado (destrave antes) ou já há aprovação/pagamento que impede a troca.');
       if(b.dataset.m==='unico') alert(r.ok?('Pagamento único definido em '+r.ok+' vínculo(s).'):'Nada foi alterado.');
       if(b.dataset.m==='entrega') alert(r.ok?('Pagamento por entrega ativado em '+r.ok+' vínculo(s).'):'Nada foi alterado.'+(r.bloq?'':' (as obras marcadas já estavam por entrega)'));
       if(r.bloq) alert(r.bloq+' vínculo(s) não foram alterados: grupo travado (destrave antes), valor já pago maior que o novo total ou retenção já liberada.');
