@@ -1519,8 +1519,10 @@ function mediaMesEmp(uid){
   let empPadrao=''; DATA.obras.forEach(o=>(o.equipe||[]).forEach(m=>{ if(!empPadrao&&m.colaboradorId===uid&&m.modelo==='media'&&!m.inativo) empPadrao=o.empresaId||''; }));
   rows.forEach(r=>{ if(!(r.pago>0.004)) return; const det=(r.det&&r.det.length)?r.det:[{emp:empPadrao,obra:'Pagamento do mês',dev:0}];
     const totDev=det.reduce((a,x)=>a+x.dev,0);
+    const uu=DATA.colaboradores.find(x=>x.id===uid); const porEmp={}; det.forEach(d=>{ porEmp[d.emp]=(porEmp[d.emp]||0)+d.dev; });
+    const empPred=Object.keys(porEmp).sort((a,b)=>porEmp[b]-porEmp[a])[0]||empPadrao; const emp=empDocDe(uu,empPred); // um único documento por mês
     det.forEach(d=>{ const val=totDev>0?r.pago*d.dev/totDev:r.pago/det.length; if(!(val>0.004)) return;
-      const k=mesAnoLabel(r.ym+'-01')+'|'+d.emp; const g=out[k]=out[k]||{mes:mesAnoLabel(r.ym+'-01'),emp:d.emp,itens:[],total:0};
+      const k=mesAnoLabel(r.ym+'-01')+'|'+emp; const g=out[k]=out[k]||{mes:mesAnoLabel(r.ym+'-01'),emp,itens:[],total:0};
       g.itens.push({obra:d.obra,papel:'Média mensal',p:0,val}); g.total+=val; }); });
   return out;
 }
@@ -2844,7 +2846,7 @@ function colaboradoresView(){
     linhas.forEach(l=>{
       if(l.tipo==='despesa') return; // despesas da obra não entram em recibo/NF
       if(l.mensal) return; // parcelas da média: fechamento pelo valor pago na conferência mensal
-      const emp=l.empresaId||'';
+      const emp=empDocDe(u,l.empresaId||'');
       if(tipoDocumento(u,emp)==='recibo'){
         const meses={}; (l.baixas||[]).forEach(b=>{ if(!b.data) return; const ma=mesAnoLabel(b.data); meses[ma]=(meses[ma]||0)+b.valor; });
         Object.keys(meses).forEach(ma=>{ const k=ma+'|'+emp; (porMes[k]=porMes[k]||[]).push({...l,val:meses[ma]}); });
@@ -2887,7 +2889,7 @@ function colaboradoresView(){
         <div class="field"><label>E-mail</label><input type="text" class="colabCampo" data-u="${esc(u.id)}" data-f="email" value="${esc(u.email||'')}"></div>
         <div class="field"><label>Chave PIX / dados bancários</label><input type="text" class="colabCampo" data-u="${esc(u.id)}" data-f="pix" value="${esc(u.pix||'')}"></div>
         <div class="field"><label>Data de início</label><input type="date" class="colabCampo" data-u="${esc(u.id)}" data-f="dataInicio" value="${esc(u.dataInicio||'')}"></div>
-        <div class="field"><label>Sócio</label><label class="small"><input type="checkbox" class="colabSocio" data-u="${esc(u.id)}" ${u.socio?'checked':''}> Recebe antecipação de lucros (recibo pela Pimentel; NF pela ET)</label></div>
+        <div class="field"><label>Documento de pagamento</label><select class="colabDoc" data-u="${esc(u.id)}"><option value="nf" ${docTipoColab(u)==='nf'?'selected':''}>Emite NF (pela empresa da obra)</option><option value="recibo" ${docTipoColab(u)==='recibo'?'selected':''}>Associado — recibo pela Pimentel Consultoria (sem NF)</option></select></div>
       </div>
       <div class="servbox" style="background:var(--accent-bg);margin-top:8px;"><b>Percentual padrão nas obras</b>
         <p class="small" style="margin:2px 0 6px;">Fica fixado aqui: ao incluir ${esc(u.nome||'o colaborador')} na equipe de uma obra, estes percentuais são aplicados sozinhos (Geral = sobre o líquido total da obra; os demais, sobre o líquido de cada disciplina). Vazio = não participa.</p>
@@ -3039,10 +3041,12 @@ function colabPagamentosView(){
 // Regra: sócios recebem RECIBO DE ANTECIPAÇÃO DE LUCROS apenas quando o pagamento é pela Pimentel Consultoria;
 // pela ET (ou qualquer outra empresa) deve-se SOLICITAR NF ao colaborador. Não sócios: sempre NF.
 function ehPimentel(empId){ const e=DATA.minhasEmpresas.find(x=>x.id===empId); return !!e && (e.nome||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').includes('pimentel'); }
+// Documento de pagamento definido no cadastro: 'nf' (emite nota) ou 'recibo' (associado — recebe sempre pela Pimentel Consultoria, sem NF)
+function docTipoColab(u){ return (u&&u.docTipo)||(u&&u.socio?'recibo':'nf'); }
+function empDocDe(u,emp){ if(docTipoColab(u)!=='recibo') return emp||''; const pe=(DATA.minhasEmpresas||[]).find(e=>ehPimentel(e.id)); return pe?pe.id:(emp||''); }
 function tipoDocumento(u,empId){
   if(!empId) return '';
-  if(ehPimentel(empId)) return 'recibo'; // quem presta serviço pela Pimentel Consultoria é associado: recibo, sem NF
-  return 'nf';
+  return docTipoColab(u);
 }
 function valorPorExtenso(v){
   const un=['zero','um','dois','três','quatro','cinco','seis','sete','oito','nove','dez','onze','doze','treze','quatorze','quinze','dezesseis','dezessete','dezoito','dezenove'];
@@ -3080,8 +3084,8 @@ function dadosDocColab(uid,mesAno,empId){
   const linhas=pagamentosDoColaborador(uid).linhas.filter(l=>l.tipo!=='despesa'&&!l.mensal);
   let itens;
   if(tipoDocumento(u,empId)==='recibo'){
-    itens=[]; linhas.filter(l=>(l.empresaId||'')===(empId||'')).forEach(l=>{ const v=(l.baixas||[]).filter(b=>b.data&&mesAnoLabel(b.data)===mesAno).reduce((a,b)=>a+b.valor,0); if(v>0.004) itens.push({...l,val:v}); });
-  } else itens=linhas.filter(l=>l.aprovado && l.mesAno===mesAno && (l.empresaId||'')===(empId||''));
+    itens=[]; linhas.filter(l=>empDocDe(u,l.empresaId||'')===(empId||'')).forEach(l=>{ const v=(l.baixas||[]).filter(b=>b.data&&mesAnoLabel(b.data)===mesAno).reduce((a,b)=>a+b.valor,0); if(v>0.004) itens.push({...l,val:v}); });
+  } else itens=linhas.filter(l=>l.aprovado && l.mesAno===mesAno && empDocDe(u,l.empresaId||'')===(empId||''));
   const mmk=mediaMesEmp(uid)[mesAno+'|'+(empId||'')]; if(mmk) itens=itens.concat(mmk.itens);
   const total=itens.reduce((s,l)=>s+l.val,0);
   const itensRows=itens.map(l=>`<tr><td>${esc(l.obra)}</td><td>${esc(l.papel)}</td><td style="text-align:right;">${l.p?pct(l.p):'—'}</td><td style="text-align:right;">${fmt(l.val)}</td></tr>`).join('');
@@ -3734,6 +3738,7 @@ function attachMain(){
     document.querySelectorAll('.cpadrao').forEach(i=>i.onchange=e=>{ const u=DATA.colaboradores.find(x=>x.id===i.dataset.u); if(!u) return; u.padrao=u.padrao||{}; const v=Math.max(0,Math.round((parseFloat(e.target.value)||0)*1e4)/1e4); if(v>0) u.padrao[i.dataset.t]=v; else delete u.padrao[i.dataset.t]; if(!Object.keys(u.padrao).length) delete u.padrao; let n=0,ob=0; DATA.obras.forEach(o=>{ if((o.equipe||[]).some(m=>m.colaboradorId===u.id&&!m.inativo)){ const k=aplicarPadraoColab(o.id,u.id,true); if(k){ n+=k; ob++; } } }); if(ob) logAcao('Percentual padrão atualizado e aplicado às obras: '+colabNome(u.id)+' ('+ob+' obra(s))'); save(DATA); setTimeout(render,0); });
     document.querySelectorAll('.cpadAplicar').forEach(b=>b.onclick=()=>{ let n=0,ob=0; DATA.obras.forEach(o=>{ if((o.equipe||[]).some(m=>m.colaboradorId===b.dataset.u&&!m.inativo)){ const k=aplicarPadraoColab(o.id,b.dataset.u,true); if(k){ n+=k; ob++; } } }); logAcao('Percentual padrão aplicado às obras: '+colabNome(b.dataset.u)+' ('+ob+' obra(s))'); save(DATA); alert(n?('Padrão aplicado em '+ob+' obra(s).'):'Nada a alterar: os vínculos já seguem o padrão ou têm aprovação/pagamento.'); setTimeout(render,0); });
     document.querySelectorAll('.cobraEt').forEach(b=>b.onclick=()=>{ const k=b.dataset.u+'|'+b.dataset.o; COLAB_OBRA_ABERTA[k]=!COLAB_OBRA_ABERTA[k]; render(); });
+    document.querySelectorAll('.colabDoc').forEach(c=>c.onchange=e=>{const u=DATA.colaboradores.find(x=>x.id===c.dataset.u); if(u){u.docTipo=e.target.value; save(DATA); render();}});
     document.querySelectorAll('.colabSocio').forEach(c=>c.onchange=e=>{const u=DATA.colaboradores.find(x=>x.id===c.dataset.u); if(u){u.socio=e.target.checked; save(DATA); render();}});
     document.querySelectorAll('.colabCampo').forEach(i=>i.onchange=e=>{const u=DATA.colaboradores.find(x=>x.id===i.dataset.u);u[i.dataset.f]=e.target.value;save(DATA);render();});
     document.querySelectorAll('.delcolab').forEach(b=>b.onclick=()=>{
