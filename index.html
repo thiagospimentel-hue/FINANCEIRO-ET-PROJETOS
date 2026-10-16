@@ -906,6 +906,7 @@ let FILTER_DASH_BUSCA='', FILTER_DASH_STATUS='', FILTER_DASH_EMP='';
 let FILTER_CONTAS='';
 let FILTER_CONTAS_MES=new Date().toISOString().slice(0,7); // '' = todos os meses
 let FILTER_EMPRESA='';
+let FAT_MES=''; let FAT_EMP='';
 let PENDING_DEL='';
 
 const STATUS_LABEL={andamento:'Em andamento',concluida:'Concluída',faturada:'Faturada',cancelada:'Cancelada'};
@@ -2585,6 +2586,39 @@ function contasCaixaCard(){
   return `<div class="card"><h2>Movimento por conta bancária</h2><table><tr><th>Empresa</th><th>Conta</th><th class="num">Entradas</th><th class="num">Saídas</th><th class="num">Saldo movimentado</th></tr>${linhas.join('')}</table>
     <p class="small">${sem?`Há ${sem} lançamento(s) sem conta: escolha a conta na coluna "Conta" da lista abaixo para que entrem na soma da conta. `:''}Os recebimentos novos já usam a conta escolhida em "Resumo p/ Cobrança".</p></div>`;
 }
+
+// Faturamento do mês: NFs emitidas no mês escolhido, por empresa (ou total)
+function faturamentoCard(){
+  const mes=FAT_MES||hojeISO().slice(0,7);
+  const emps=DATA.minhasEmpresas||[];
+  const lin=[];
+  DATA.obras.forEach(o=>{
+    if(FAT_EMP && (o.empresaId||'')!==FAT_EMP) return;
+    (o.etapasPagamento||[]).forEach(e=>{
+      if(!e.nfData || e.nfData.slice(0,7)!==mes) return;
+      const bruto=valorEtapaContrato(o,e);
+      const pg=(e.baixas||[]).map(b=>b.data).filter(Boolean).sort();
+      lin.push({emp:o.empresaId||'',cli:(o.cliente&&o.cliente.nome)||'—',obra:o.nomeObra,etapa:e.nome,nf:e.nfNumero||'',emissao:e.nfData,bruto,rec:Math.min(baixaTotal(e),bruto),pago:pg.length?pg[pg.length-1]:'',venc:e.vencimento||''});
+    });
+  });
+  lin.sort((a,b)=>a.emissao<b.emissao?-1:a.emissao>b.emissao?1:(a.cli<b.cli?-1:1));
+  const soma=l=>l.reduce((t,x)=>({b:t.b+x.bruto,r:t.r+x.rec}),{b:0,r:0});
+  const row=x=>`<tr><td>${esc(x.cli)}</td><td class="small">${esc(x.obra)} · ${esc(x.etapa)}${FAT_EMP?'':` · <span class="small">${esc(empresaNome(x.emp)||'sem empresa')}</span>`}</td><td>${esc(x.nf)||'—'}</td><td class="num">${fmt(x.bruto)}</td><td class="num">${fmt(liqFonte(x.bruto))}</td><td>${isoToBr(x.emissao)}</td><td>${x.pago?isoToBr(x.pago)+(x.rec<x.bruto-0.005?' <span class="small">(parcial)</span>':''):'<span class="small">a receber</span>'}</td></tr>`;
+  let corpo='';
+  if(!lin.length) corpo='<tr><td colspan="7" class="small">Nenhuma NF emitida neste mês'+(FAT_EMP?' para esta empresa':'')+'.</td></tr>';
+  else if(!FAT_EMP && emps.length>1){
+    const ids=[...new Set(lin.map(x=>x.emp))];
+    corpo=ids.map(id=>{ const g=lin.filter(x=>x.emp===id), t=soma(g);
+      return `<tr class="hdr"><td colspan="7">${esc(empresaNome(id)||'Sem empresa definida')}</td></tr>${g.map(row).join('')}<tr style="font-weight:600;"><td colspan="3">Subtotal</td><td class="num">${fmt(t.b)}</td><td class="num">${fmt(liqFonte(t.b))}</td><td colspan="2" class="small">recebido ${fmt(t.r)}</td></tr>`; }).join('');
+  } else corpo=lin.map(row).join('');
+  const T=soma(lin);
+  const [y,m]=mes.split('-');
+  return `<div class="card"><div class="row-flex" style="justify-content:space-between;flex-wrap:wrap;gap:8px;"><h2 style="margin:0;">Faturamento do mês</h2>
+    <div class="row-flex" style="gap:8px;flex-wrap:wrap;"><label class="small">Mês de emissão da NF <input type="month" id="fatMes" value="${esc(mes)}"></label>
+    <label class="small">Empresa <select id="fatEmp"><option value="">Total (todas)</option>${emps.map(e=>`<option value="${esc(e.id)}" ${FAT_EMP===e.id?'selected':''}>${esc(e.nome)}</option>`).join('')}</select></label></div></div>
+    <div style="overflow-x:auto;"><table style="margin-top:8px;"><tr><th>Cliente</th><th>Obra · etapa</th><th>NF</th><th class="num">Valor bruto</th><th class="num">Líquido (−${String(RET_FONTE).replace('.',',')}%)</th><th>Emissão</th><th>Pagamento</th></tr>${corpo}
+    <tr class="hdr"><td colspan="3">Total faturado em ${MES_ABREV[+m-1]}/${y}${FAT_EMP?' — '+esc(empresaNome(FAT_EMP)):''} (${lin.length} NF)</td><td class="num">${fmt(T.b)}</td><td class="num">${fmt(liqFonte(T.b))}</td><td colspan="2" class="small">recebido ${fmt(T.r)} · a receber ${fmt(Math.max(0,T.b-T.r))}</td></tr></table></div></div>`;
+}
 function caixaView(){
   let lista=DATA.caixa.filter(movVisivel);
   if(FILTER_CAIXA_OBRA) lista=lista.filter(m=>m.obraId===FILTER_CAIXA_OBRA);
@@ -2602,7 +2636,7 @@ function caixaView(){
   }).join('');
   const saldoFiltrado=lista.reduce((s,m)=>s+(m.tipo==='entrada'?m.valor:-m.valor),0);
   const saldoGeral=DATA.caixa.reduce((s,m)=>s+(m.tipo==='entrada'?m.valor:-m.valor),0);
-  return conferenciaCard()+contasCaixaCard()+`<div class="card"><h2>Novo lançamento</h2><div class="row-flex">
+  return conferenciaCard()+contasCaixaCard()+faturamentoCard()+`<div class="card"><h2>Novo lançamento</h2><div class="row-flex">
       <input type="date" id="movData" value="${new Date().toISOString().slice(0,10)}">
       <input type="text" id="movDesc" placeholder="Descrição">
       <select id="movTipo"><option value="entrada">Entrada</option><option value="saida">Saída</option></select>
@@ -3491,6 +3525,8 @@ function attachMain(){
       bx.movId=mv.id; delete bx.semCaixa; mv.origem=x.origem; if(x.colaboradorId&&!mv.colaboradorId) mv.colaboradorId=x.colaboradorId;
       logAcao('Baixa antiga vinculada ao caixa: '+x.label+' ('+fmt(bx.valor)+')'); save(DATA); render();
     });
+    const fm=document.getElementById('fatMes'); if(fm) fm.onchange=e=>{ FAT_MES=e.target.value; setTimeout(render,0); };
+    const fe=document.getElementById('fatEmp'); if(fe) fe.onchange=e=>{ FAT_EMP=e.target.value; setTimeout(render,0); };
     document.querySelectorAll('.movContaSel').forEach(i=>i.onchange=e=>{ const m=DATA.caixa.find(x=>x.id===i.dataset.id); if(!m) return; if(e.target.value) m.contaId=e.target.value; else delete m.contaId; save(DATA); setTimeout(render,0); });
     document.querySelectorAll('.delmov').forEach(b=>b.onclick=()=>{const mv=DATA.caixa.find(m=>m.id===b.dataset.id); if(!mv||mv.origem) return; DATA.caixa=DATA.caixa.filter(m=>m.id!==b.dataset.id); logAcao('Lançamento manual excluído: '+mv.desc+' ('+fmt(mv.valor)+')'); save(DATA);render();});
     const fObra=document.getElementById('filterCaixaObra'); if(fObra) fObra.onchange=e=>{FILTER_CAIXA_OBRA=e.target.value;render();};
