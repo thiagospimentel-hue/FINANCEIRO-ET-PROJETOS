@@ -30,7 +30,7 @@ th{color:var(--muted);font-weight:600;}
 .tabs button{background:var(--panel);border:1px solid var(--border);border-radius:20px;padding:7px 14px;font-size:13px;color:var(--muted);white-space:nowrap;}
 .tabs button.active{background:var(--accent);color:#fff;border-color:var(--accent);}
 .row-flex{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
-input[type=text],input[type=number],input[type=date],textarea,select{border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:6px;padding:6px 8px;font-size:13px;}
+input[type=text],input[type=search],input[type=number],input[type=date],textarea,select{border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:6px;padding:6px 8px;font-size:13px;}
 .pct-input{width:60px;}
 .val-input{width:110px;}
 .btn{background:var(--accent);color:#fff;border:none;border-radius:6px;padding:7px 12px;font-size:13px;}
@@ -106,7 +106,7 @@ tbody tr:hover td,table tr:not(.hdr):hover td{background:color-mix(in srgb,var(-
 .btn{border-radius:8px;padding:8px 14px;font-weight:600;transition:filter .12s,transform .05s;}
 .btn:hover{filter:brightness(1.08);} .btn:active{transform:translateY(1px);}
 .btn.danger{font-weight:500;}
-input[type=text],input[type=number],input[type=date],textarea,select{border-radius:8px;padding:7px 10px;}
+input[type=text],input[type=search],input[type=number],input[type=date],textarea,select{border-radius:8px;padding:7px 10px;}
 input:focus,select:focus,textarea:focus{outline:2px solid color-mix(in srgb,var(--accent) 45%,transparent);outline-offset:0;border-color:var(--accent);}
 .servbox{border-radius:10px;}
 td.num{white-space:nowrap;}
@@ -897,6 +897,7 @@ let FILTER_CAIXA_COLAB='';
 let FILTER_STATUS='';
 let FILTER_FAT_MES='';
 let FILTER_FAT_STATUS='';
+let FILTER_DASH_BUSCA='', FILTER_DASH_STATUS='', FILTER_DASH_EMP='';
 let FILTER_CONTAS='';
 let FILTER_CONTAS_MES=new Date().toISOString().slice(0,7); // '' = todos os meses
 let FILTER_EMPRESA='';
@@ -1457,8 +1458,35 @@ function fluxoProjetadoCard(ind){
     ${linhas.map(l=>`<tr><td>${esc(l.label)}</td><td class="num pos">${fmt(l.e)}</td><td class="num neg">${fmt(l.sd)}</td><td class="num ${l.e-l.sd>=0?'pos':'neg'}">${fmt(l.e-l.sd)}</td><td class="num ${l.acum>=0?'pos':'neg'}">${fmt(l.acum)}</td></tr>`).join('') || '<tr><td colspan="5" class="small">Nada previsto.</td></tr>'}
     </table></div></div>`;
 }
+const semAcento=t=>String(t||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+function dashFiltroAtivo(){ return !!(FILTER_DASH_BUSCA.trim()||FILTER_DASH_STATUS||FILTER_DASH_EMP); }
+function obrasDash(){
+  const q=semAcento(FILTER_DASH_BUSCA.trim()).split(/\s+/).filter(Boolean);
+  return obrasVisiveis().filter(o=>{
+    if(FILTER_DASH_STATUS && (o.status||'andamento')!==FILTER_DASH_STATUS) return false;
+    if(FILTER_DASH_EMP && o.empresaId!==FILTER_DASH_EMP) return false;
+    if(!q.length) return true;
+    const c=o.cliente||{};
+    const alvo=semAcento([o.nomeObra,o.codigo,c.nome,c.spe,c.construtora,c.documento].join(' '));
+    return q.every(t=>alvo.includes(t));
+  });
+}
+function dashFiltroBar(total,achadas){
+  const st=Object.keys(STATUS_LABEL).map(k=>`<option value="${k}" ${k===FILTER_DASH_STATUS?'selected':''}>${STATUS_LABEL[k]}</option>`).join('');
+  const emp=(DATA.minhasEmpresas||[]).map(e=>`<option value="${esc(e.id)}" ${e.id===FILTER_DASH_EMP?'selected':''}>${esc(e.nome)}</option>`).join('');
+  return `<div class="card">
+    <div class="row-flex" style="flex-wrap:wrap;gap:8px;align-items:center;">
+      <input type="search" id="dashBusca" placeholder="🔎 Buscar obra (nome, código, cliente, construtora…)" value="${esc(FILTER_DASH_BUSCA)}" autocomplete="off" style="flex:1;min-width:240px;">
+      <select id="dashStatus"><option value="">Todos os status</option>${st}</select>
+      <select id="dashEmp"><option value="">Todas as empresas</option>${emp}</select>
+      ${dashFiltroAtivo()?'<button class="btn secondary" id="dashLimpar">Limpar filtros</button>':''}
+    </div>
+    ${dashFiltroAtivo()?`<p class="small" style="margin:8px 0 0;">Mostrando <b>${achadas}</b> de ${total} obra(s). Os blocos de caixa e equipe continuam mostrando a empresa toda; "Visão geral", "Ranking" e "Faturamento por etapa" seguem o filtro.</p>`:''}
+  </div>`;
+}
 function dashboardView(){
-  const obras=obrasVisiveis();
+  const obrasTodas=obrasVisiveis();
+  const obras=obrasDash();
   let fatTotal=0,despTotal=0,lucroTotal=0,realizadoLiquido=0;
   const linhas=obras.map(o=>{
     const r=calcObra(o); const real=realizadoObra(o.id);
@@ -1486,12 +1514,13 @@ function dashboardView(){
         <div class="small">${pct(lucroPct)} de margem prevista</div>
       </div>
     </div>`;
-  }).join('') || '<p class="small">Nenhuma obra cadastrada ainda.</p>';
+  }).join('') || `<p class="small">${dashFiltroAtivo()?'Nenhuma obra encontrada com esse filtro.':'Nenhuma obra cadastrada ainda.'}</p>`;
 
   const pend=aprovacoesPendentes(); const pendTot=pend.reduce((x,y)=>x+y.valor,0);
   const pendCard=pend.length?`<div class="aviso" style="justify-content:space-between;border-color:#f59e0b;"><span>⏳ <b>${pend.length}</b> entrega(s) da equipe aguardando a sua aprovação — ${fmt(pendTot)}</span><button class="btn goAprov">Revisar agora</button></div>`:'';
   return `
   ${pendCard}
+  ${dashFiltroBar(obrasTodas.length,obras.length)}
   <div class="card">
     <h2>Caixa e cobranças — hoje</h2>
     <div class="grid3">
@@ -1528,7 +1557,7 @@ function dashboardView(){
     </div>
     <div class="grid3" style="margin-top:10px;">
       <div><span class="small">Resultado realizado nas obras (recebido − pago)</span><br><b class="${realizadoLiquido>=0?'pos':'neg'}">${fmt(realizadoLiquido)}</b></div>
-      <div><span class="small">Obras cadastradas</span><br><b>${obras.length}</b></div>
+      <div><span class="small">${dashFiltroAtivo()?'Obras no filtro':'Obras cadastradas'}</span><br><b>${obras.length}</b></div>
       <div></div>
     </div>
     <div style="margin-top:10px;">${statusChips}</div>
@@ -1541,10 +1570,10 @@ function dashboardView(){
   ${faturamentoDashboardCard()}`;
 }
 
-function faturamentoFlat(){
+function faturamentoFlat(obrasSel){
   const hoje=new Date().toISOString().slice(0,10);
   const lista=[];
-  obrasVisiveis().forEach(obra=>{
+  (obrasSel||obrasVisiveis()).forEach(obra=>{
     resumoEtapasObra(obra).forEach(e=>{
       const valor=e.valor;
       const vencida = !!(e.vencimento && !e.pago && e.vencimento<hoje);
@@ -1559,11 +1588,11 @@ function faturamentoFlat(){
 }
 function mesesFaturamentoDisponiveis(){
   const set=new Set();
-  faturamentoFlat().forEach(e=>{ if(e.mesVenc) set.add(e.mesVenc); });
+  faturamentoFlat(obrasDash()).forEach(e=>{ if(e.mesVenc) set.add(e.mesVenc); });
   return Array.from(set).sort();
 }
 function faturamentoDashboardCard(){
-  let lista=faturamentoFlat();
+  let lista=faturamentoFlat(obrasDash());
   if(FILTER_FAT_MES) lista=lista.filter(e=>e.mesVenc===FILTER_FAT_MES);
   if(FILTER_FAT_STATUS==='vencida') lista=lista.filter(e=>e.vencida);
   else if(FILTER_FAT_STATUS==='pago') lista=lista.filter(e=>e.pago);
@@ -2844,6 +2873,11 @@ function attachMain(){
   }
 
   if(TAB==='dashboard' && SESSION.role==='admin'){
+    const dB=document.getElementById('dashBusca');
+    if(dB) dB.oninput=e=>{ FILTER_DASH_BUSCA=e.target.value; render(); const n=document.getElementById('dashBusca'); if(n){ n.focus(); try{ n.setSelectionRange(n.value.length,n.value.length); }catch(_){} } };
+    const dS=document.getElementById('dashStatus'); if(dS) dS.onchange=e=>{FILTER_DASH_STATUS=e.target.value;render();};
+    const dE=document.getElementById('dashEmp'); if(dE) dE.onchange=e=>{FILTER_DASH_EMP=e.target.value;render();};
+    const dL=document.getElementById('dashLimpar'); if(dL) dL.onclick=()=>{FILTER_DASH_BUSCA='';FILTER_DASH_STATUS='';FILTER_DASH_EMP='';FILTER_FAT_MES='';FILTER_FAT_STATUS='';render();};
     const ga=document.querySelector('.goAprov'); if(ga) ga.onclick=()=>{TAB='aprovacoes';render();};
     const fMes=document.getElementById('filterFatMes'); if(fMes) fMes.onchange=e=>{FILTER_FAT_MES=e.target.value;render();};
     const fStatus=document.getElementById('filterFatStatus'); if(fStatus) fStatus.onchange=e=>{FILTER_FAT_STATUS=e.target.value;render();};
