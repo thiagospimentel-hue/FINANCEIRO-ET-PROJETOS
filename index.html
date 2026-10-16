@@ -2240,7 +2240,7 @@ function despesasObraBox(obra){
     <table><tr><th>Despesa</th><th>Fornecedor</th><th>Disciplina</th><th>Colaborador</th><th class="num">%</th><th class="num">Valor</th><th></th><th>Vencimento</th><th class="num">Pago</th><th></th></tr>${rows}
       <tr class="hdr"><td colspan="4">Total das despesas da obra</td><td class="num">${pct(base?despesasObraTotal(obra)/base*100:0)}</td><td class="num">${fmt(despesasObraTotal(obra))}</td><td colspan="4"></td></tr></table>
     <datalist id="listaForn">${fornecedoresConhecidos().map(x=>`<option value="${esc(x)}">`).join('')}</datalist>
-    <div class="row-flex" style="margin-top:6px;"><button class="btn secondary dobraAdd" data-o="${esc(obra.id)}" data-n="ART" data-f="CREA">+ ART (CREA)</button> <button class="btn secondary dobraAdd" data-o="${esc(obra.id)}" data-n="Lista de materiais">+ Lista de materiais</button> <button class="btn secondary dobraAdd" data-o="${esc(obra.id)}" data-n="Estudo de proteção">+ Estudo de proteção</button> <button class="btn secondary dobraAdd" data-o="${esc(obra.id)}" data-n="">+ outra despesa</button></div>`;
+    <div class="row-flex" style="margin-top:6px;"><button class="btn secondary dobraAdd" data-o="${esc(obra.id)}" data-n="ART" data-f="CREA">+ ART (CREA)</button> <button class="btn secondary dobraAdd" data-o="${esc(obra.id)}" data-n="Lista de materiais">+ Lista de materiais</button> <button class="btn secondary dobraAdd" data-o="${esc(obra.id)}" data-n="Estudo de proteção">+ Estudo de proteção</button> <button class="btn secondary dobraAdd" data-o="${esc(obra.id)}" data-n="Estudo de coordenação">+ Estudo de coordenação</button> <button class="btn secondary dobraAdd" data-o="${esc(obra.id)}" data-n="">+ outra despesa</button></div>`;
 }
 function conferirObra(obra){
   const av=[], et=obra.etapasPagamento||[];
@@ -3127,7 +3127,7 @@ function attachMain(){
     document.querySelectorAll('.dobraVenc').forEach(i=>i.onchange=e=>{ const t=dobra(i); if(!t) return; const iso=brToIso(e.target.value); if(iso===null){ i.style.borderColor='var(--bad)'; return; } if(iso) t.d.vencimento=iso; else delete t.d.vencimento; save(DATA); render(); });
     document.querySelectorAll('.dobraDel').forEach(b=>b.onclick=()=>{ const t=dobra(b); if(!t) return; t.o.despesasObra=t.o.despesasObra.filter(x=>x.id!==t.d.id); save(DATA); render(); });
     document.querySelectorAll('.dobraAdd').forEach(b=>b.onclick=()=>{ const o=DATA.obras.find(x=>x.id===b.dataset.o); if(!o) return; o.despesasObra=o.despesasObra||[]; const nd={id:novoId('do'),nome:b.dataset.n||'Nova despesa',fornecedor:b.dataset.f||'',colaboradorId:'',pct:0,modo:'pct'};
-      if(semAcento(nd.nome).includes('estudo de protec')){ const sub=servicoSubestacao(o); if(sub) nd.servicoId=sub.id; else alert('Esta obra não tem a disciplina Subestação. A despesa foi criada como Geral; adicione a disciplina e escolha-a na coluna "Disciplina".'); }
+      if(/estudo de (protec|coordenac)/.test(semAcento(nd.nome))){ const sub=servicoSubestacao(o); if(sub) nd.servicoId=sub.id; else alert('Esta obra não tem a disciplina Subestação. A despesa foi criada como Geral; adicione a disciplina e escolha-a na coluna "Disciplina".'); }
       o.despesasObra.push(nd); save(DATA); render(); });
     document.querySelectorAll('.addaditivo').forEach(b=>b.onclick=()=>{
       const obra=DATA.obras.find(o=>o.id===b.dataset.o); const sv=obra&&obra.servicos.find(x=>x.id===b.dataset.s); if(!sv) return;
