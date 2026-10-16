@@ -1494,6 +1494,96 @@ function equipeGridSet(obraId,colab,base,pct){
     obra.equipe.push(novo);
   }
 }
+
+// ===== Serviços e despesas da obra — visão simples (grades) + resumo por colaborador/despesa =====
+let SERV_MODO='grade', SG_EXTRA={}, SG_ABERTO={};
+function servGridHtml(obra,servRowsLista){
+  const oid=esc(obra.id);
+  const topo=`<div class="row-flex" style="gap:6px;margin-bottom:6px;"><span class="small">Visão:</span><button class="btn ${SERV_MODO==='grade'?'':'secondary'} servmodo" data-m="grade" ${SERV_MODO==='grade'?'disabled':''}>Simples (grade)</button><button class="btn ${SERV_MODO==='lista'?'':'secondary'} servmodo" data-m="lista" ${SERV_MODO==='lista'?'disabled':''}>Detalhada (lista)</button></div>`;
+  if(SERV_MODO==='lista') return topo+servRowsLista+`<button class="btn secondary addserv" data-o="${oid}">+ serviço nesta obra</button>`;
+  const sv=obra.servicos||[];
+  let totBruto=0,totImp=0,totLiq=0;
+  const rowsA=sv.map(s=>{
+    const rs=calcServico(s), vig=vigente(s); totBruto+=vig; totImp+=rs.imp; totLiq+=rs.liquido;
+    const tipoOpts=DATA.tiposServico.map(t=>`<option value="${esc(t.id)}" ${t.id===s.tipoId?'selected':''}>${esc(t.nome)}</option>`).join('');
+    const ab=!!SG_ABERTO[s.id];
+    const extra=Math.abs(vig-(s.valorTotal||0))>0.004;
+    return `<tr>
+      <td><select class="sgtipo" data-s="${esc(s.id)}">${tipoOpts}</select></td>
+      <td class="num"><span class="small">R$</span> <input type="text" inputmode="decimal" class="val-input vtinp" data-s="${esc(s.id)}" value="${(s.valorTotal||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}">${extra?`<div class="small">vigente ${fmt(vig)} (reajuste/aditivos)</div>`:''}</td>
+      <td class="num"><input type="number" step="0.1" class="pct-input impinp" data-s="${esc(s.id)}" value="${s.imposto}">%<div class="small">${fmt(rs.imp)}</div></td>
+      <td class="num"><b>${fmt(rs.liquido)}</b></td>
+      <td style="white-space:nowrap;"><button class="btn secondary sgab" data-s="${esc(s.id)}">${ab?'Ocultar':'Aditivos/reajuste'}</button> <button class="btn danger delserv" data-s="${esc(s.id)}">x</button></td>
+    </tr>${ab?`<tr><td colspan="5">${aditivoBox(obra,s)}</td></tr>`:''}`;
+  }).join('');
+  const gridA=`<div style="overflow-x:auto;"><table><tr><th>Disciplina / serviço</th><th class="num">Valor contratado (c/ imposto)</th><th class="num">Imposto</th><th class="num">Líquido</th><th></th></tr>${rowsA||'<tr><td colspan="5" class="small">Nenhum serviço.</td></tr>'}
+    <tr style="font-weight:600;"><td>Total</td><td class="num">${fmt(totBruto)}</td><td class="num">${fmt(totImp)}</td><td class="num">${fmt(totLiq)}</td><td></td></tr></table></div>
+    <button class="btn secondary addserv" data-o="${oid}">+ disciplina</button>`;
+  // grade de despesas (linhas = nome da despesa, colunas = disciplinas)
+  const nomes=[]; sv.forEach(s=>(s.despesas||[]).forEach(d=>{ if(d.nome!==undefined && !nomes.includes(d.nome)) nomes.push(d.nome); }));
+  (SG_EXTRA[obra.id]||[]).forEach(n=>{ if(!nomes.includes(n)) nomes.push(n); });
+  const colTot={}; sv.forEach(s=>colTot[s.id]={pct:0,val:0});
+  const rowsB=nomes.map(n=>{
+    let tot=0;
+    const cels=sv.map(s=>{
+      const d=(s.despesas||[]).find(x=>x.nome===n); const v=d?calcServico(s).liquido*((d.pct||0)/100):0; tot+=v;
+      if(d){ colTot[s.id].pct+=(d.pct||0); colTot[s.id].val+=v; }
+      return `<td class="num"><input type="number" step="0.1" min="0" class="pct-input sgdesp" data-o="${oid}" data-s="${esc(s.id)}" data-n="${esc(n)}" value="${d&&d.pct?d.pct:''}" placeholder="—">${d&&d.pct?`<div class="small">${fmt(v)}</div>`:''}</td>`;
+    }).join('');
+    return `<tr><td><input type="text" class="sgdnome" list="despNomes" data-o="${oid}" data-n="${esc(n)}" value="${esc(n)}" style="width:170px;"></td>${cels}<td class="num"><b>${fmt(tot)}</b></td><td><button class="btn danger sgddel" data-o="${oid}" data-n="${esc(n)}">x</button></td></tr>`;
+  }).join('');
+  const nomesTodas=new Set(); DATA.obras.forEach(o=>(o.servicos||[]).forEach(s=>(s.despesas||[]).forEach(d=>{ if(d.nome) nomesTodas.add(d.nome); })));
+  const gridB=`<h4 style="margin:14px 0 4px;">Despesas por disciplina (% do líquido) — custo fixo, coordenação, documentação, Mitech…</h4>
+    <datalist id="despNomes">${[...nomesTodas].map(n=>`<option value="${esc(n)}"></option>`).join('')}</datalist>
+    <div style="overflow-x:auto;"><table><tr><th>Despesa</th>${sv.map(s=>`<th class="num">${esc(tipoNome(s.tipoId))}<div class="small" style="font-weight:normal;">${fmt(calcServico(s).liquido)}</div></th>`).join('')}<th class="num">Total R$</th><th></th></tr>
+    ${rowsB||`<tr><td colspan="${sv.length+3}" class="small">Nenhuma despesa cadastrada.</td></tr>`}
+    <tr style="font-weight:600;"><td>Total</td>${sv.map(s=>`<td class="num">${colTot[s.id].pct?pct(colTot[s.id].pct):'—'}<div class="small">${colTot[s.id].val?fmt(colTot[s.id].val):''}</div></td>`).join('')}<td class="num">${fmt(sv.reduce((a,s)=>a+colTot[s.id].val,0))}</td><td></td></tr></table></div>
+    <div class="row-flex" style="margin-top:6px;gap:6px;"><input type="text" class="sgdnovo" list="despNomes" data-o="${oid}" placeholder="Nova despesa (ex.: Coordenação Mitech)" style="width:260px;"><button class="btn secondary sgdadd" data-o="${oid}">+ despesa</button></div>`;
+  return topo+`<p class="small">Preencha o valor de cada disciplina e, abaixo, o % de cada despesa sobre o líquido da disciplina (vazio = não se aplica).</p>`+gridA+gridB;
+}
+function servSetDespesa(obra,sid,nome,pct){
+  const s=(obra.servicos||[]).find(x=>x.id===sid); if(!s) return; s.despesas=s.despesas||[];
+  pct=Math.max(0,Math.round((parseFloat(pct)||0)*1e4)/1e4);
+  const i=s.despesas.findIndex(d=>d.nome===nome);
+  if(pct>0){ if(i>=0) s.despesas[i].pct=pct; else s.despesas.push({nome,pct}); }
+  else if(i>=0) s.despesas.splice(i,1);
+}
+// Resumo da obra: linhas = colaboradores e despesas; colunas = disciplinas (+ Geral e Total)
+function resumoGridObra(obra){
+  const sv=obra.servicos||[]; const cols=sv.map(s=>({id:s.id,nome:tipoNome(s.tipoId)})); const geral='__geral';
+  const todasCols=cols.concat([{id:geral,nome:'Geral'}]);
+  const linhasEq={}, ordemEq=[];
+  (obra.equipe||[]).forEach(m=>{
+    const v=equipeMembroValor(obra,m); if(!v) return;
+    const k=m.colaboradorId||'?'; if(!linhasEq[k]){ linhasEq[k]={nome:colabNome(m.colaboradorId)||'(sem colaborador)',papel:m.papel||'',v:{}}; ordemEq.push(k); }
+    const ids=(m.baseIds||[]).filter(id=>sv.some(s=>s.id===id));
+    if(!ids.length){ linhasEq[k].v[geral]=(linhasEq[k].v[geral]||0)+v; }
+    else { const pesos=ids.map(id=>{const s=sv.find(x=>x.id===id); return calcServico(s).liquido;}); const sp=pesos.reduce((a,b)=>a+b,0)||1; ids.forEach((id,i)=>{ linhasEq[k].v[id]=(linhasEq[k].v[id]||0)+v*pesos[i]/sp; }); }
+  });
+  const linhasDesp={}, ordemD=[];
+  sv.forEach(s=>(s.despesas||[]).forEach(d=>{ const v=calcServico(s).liquido*((d.pct||0)/100); if(!v) return; const k=d.nome||'Outros'; if(!linhasDesp[k]){ linhasDesp[k]={nome:k,v:{}}; ordemD.push(k); } linhasDesp[k].v[s.id]=(linhasDesp[k].v[s.id]||0)+v; }));
+  const linhasObra=[]; (obra.despesasObra||[]).forEach(d=>{ const v=despObraValor(obra,d); if(v) linhasObra.push({nome:d.nome||'Despesa da obra',v:{[geral]:v}}); });
+  const tot={}; todasCols.forEach(c=>tot[c.id]=0);
+  const soma=l=>todasCols.reduce((a,c)=>a+(l.v[c.id]||0),0);
+  const mk=(l,rotulo)=>{ todasCols.forEach(c=>tot[c.id]+=(l.v[c.id]||0)); return `<tr><td>${rotulo}</td>${todasCols.map(c=>`<td class="num">${l.v[c.id]?fmt(l.v[c.id]):'—'}</td>`).join('')}<td class="num"><b>${fmt(soma(l))}</b></td></tr>`; };
+  const sec=t=>`<tr><td colspan="${todasCols.length+2}" style="font-weight:600;background:var(--accent-bg);">${t}</td></tr>`;
+  const rEq=ordemEq.map(k=>mk(linhasEq[k],esc(linhasEq[k].nome)+(linhasEq[k].papel?` <span class="small">${esc(linhasEq[k].papel)}</span>`:''))).join('');
+  const rDe=ordemD.map(k=>mk(linhasDesp[k],esc(k))).join('')+linhasObra.map(l=>mk(l,esc(l.nome)+' <span class="small">(obra)</span>')).join('');
+  const liq={}, bruto={}; sv.forEach(s=>{ liq[s.id]=calcServico(s).liquido; bruto[s.id]=vigente(s); }); liq[geral]=0; bruto[geral]=0;
+  const totCusto=todasCols.reduce((a,c)=>a+tot[c.id],0), totLiq=sv.reduce((a,s)=>a+liq[s.id],0), totBruto=sv.reduce((a,s)=>a+bruto[s.id],0);
+  const lucro={}; todasCols.forEach(c=>lucro[c.id]=(liq[c.id]||0)-tot[c.id]);
+  const lucroTot=totLiq-totCusto;
+  const html=`<h3>Resumo da obra — colaboradores e despesas por disciplina</h3>
+    <div style="overflow-x:auto;"><table><tr><th></th>${todasCols.map(c=>`<th class="num">${esc(c.nome)}</th>`).join('')}<th class="num">Total</th></tr>
+    <tr><td>Valor contratado (bruto)</td>${todasCols.map(c=>`<td class="num">${bruto[c.id]?fmt(bruto[c.id]):'—'}</td>`).join('')}<td class="num">${fmt(totBruto)}</td></tr>
+    <tr><td>Líquido (após imposto)</td>${todasCols.map(c=>`<td class="num">${liq[c.id]?fmt(liq[c.id]):'—'}</td>`).join('')}<td class="num">${fmt(totLiq)}</td></tr>
+    ${rEq?sec('Equipe (por colaborador)')+rEq:''}${rDe?sec('Despesas')+rDe:''}
+    <tr style="font-weight:600;"><td>Custo total</td>${todasCols.map(c=>`<td class="num">${tot[c.id]?fmt(tot[c.id]):'—'}</td>`).join('')}<td class="num">${fmt(totCusto)}</td></tr>
+    <tr style="font-weight:700;"><td>Lucro</td>${todasCols.map(c=>`<td class="num ${lucro[c.id]<0?'neg':'pos'}">${(liq[c.id]||tot[c.id])?fmt(lucro[c.id]):'—'}</td>`).join('')}<td class="num ${lucroTot<0?'neg':'pos'}">${fmt(lucroTot)}</td></tr>
+    <tr><td>Margem sobre o bruto</td>${todasCols.map(c=>`<td class="num">${bruto[c.id]?pct(lucro[c.id]/bruto[c.id]*100):'—'}</td>`).join('')}<td class="num">${totBruto?pct(lucroTot/totBruto*100):'—'}</td></tr></table></div>
+    <p class="small">"Geral" = equipe com base no líquido total da obra e despesas da obra (ART, materiais…), que não pertencem a uma disciplina específica.</p>`;
+  return {html,totCusto,lucroTot};
+}
 function colabOptions(selectedId){
   return DATA.colaboradores.map(u=>`<option value="${esc(u.id)}" ${u.id===selectedId?'selected':''}>${esc(u.nome)}</option>`).join('');
 }
@@ -1961,10 +2051,10 @@ function obrasView(){
         <option value="Responsável Técnico"></option>
       </datalist>
       <h3>Serviços da obra</h3>
-      ${servRows}
-      <button class="btn secondary addserv" data-o="${esc(obra.id)}">+ serviço nesta obra</button>
+      ${servGridHtml(obra,servRows)}
       ${docsBox(obra)}
       ${despesasObraBox(obra)}
+      ${resumoGridObra(obra).html}
       `:''}
     </div>`;
   }).join('');
@@ -3032,6 +3122,25 @@ function attachMain(){
       obra.etapasPagamento=obra.etapasPagamento.filter(x=>x.aditivoId!==b.dataset.a);
       logAcao('Aditivo excluído em '+(obra.nomeObra||'obra')+(a?': '+a.desc:''));
       save(DATA); render();
+    });
+    document.querySelectorAll('.servmodo').forEach(b=>b.onclick=()=>{SERV_MODO=b.dataset.m;render();});
+    document.querySelectorAll('.sgtipo').forEach(sel=>sel.onchange=e=>{DATA.obras.forEach(o=>o.servicos.forEach(s=>{if(s.id===sel.dataset.s)s.tipoId=e.target.value;}));save(DATA);setTimeout(render,0);});
+    document.querySelectorAll('.sgab').forEach(b=>b.onclick=()=>{SG_ABERTO[b.dataset.s]=!SG_ABERTO[b.dataset.s];render();});
+    document.querySelectorAll('.sgdesp').forEach(i=>i.onchange=e=>{const o=DATA.obras.find(x=>x.id===i.dataset.o); if(!o) return; servSetDespesa(o,i.dataset.s,i.dataset.n,e.target.value); save(DATA); setTimeout(render,0);});
+    document.querySelectorAll('.sgdnome').forEach(i=>i.onchange=e=>{
+      const o=DATA.obras.find(x=>x.id===i.dataset.o); const novo=e.target.value.trim(); const velho=i.dataset.n; if(!o||!novo||novo===velho) return;
+      if(!o.servicos.some(s=>(s.despesas||[]).some(d=>d.nome===velho)) && !(SG_EXTRA[o.id]||[]).includes(velho)) return;   // já renomeada
+      if(o.servicos.some(s=>(s.despesas||[]).some(d=>d.nome===novo))){ alert('Já existe uma despesa com esse nome nesta obra.'); render(); return; }
+      o.servicos.forEach(s=>(s.despesas||[]).forEach(d=>{ if(d.nome===velho) d.nome=novo; })); SG_EXTRA[o.id]=(SG_EXTRA[o.id]||[]).map(n=>n===velho?novo:n); save(DATA); setTimeout(render,0);
+    });
+    document.querySelectorAll('.sgddel').forEach(b=>b.onclick=()=>{
+      const o=DATA.obras.find(x=>x.id===b.dataset.o); if(!o) return;
+      if(!confirm('Remover a despesa "'+b.dataset.n+'" de todas as disciplinas desta obra?')) return;
+      o.servicos.forEach(s=>{ s.despesas=(s.despesas||[]).filter(d=>d.nome!==b.dataset.n); }); SG_EXTRA[o.id]=(SG_EXTRA[o.id]||[]).filter(n=>n!==b.dataset.n); save(DATA); render();
+    });
+    document.querySelectorAll('.sgdadd').forEach(b=>b.onclick=()=>{
+      const inp=document.querySelector('.sgdnovo[data-o="'+b.dataset.o+'"]'); const n=(inp&&inp.value||'').trim(); if(!n) return;
+      (SG_EXTRA[b.dataset.o]=SG_EXTRA[b.dataset.o]||[]).push(n); render();
     });
     document.querySelectorAll('.tiposel').forEach(sel=>sel.onchange=e=>{DATA.obras.forEach(o=>o.servicos.forEach(s=>{if(s.id===sel.dataset.s)s.tipoId=e.target.value;}));save(DATA);});
     document.querySelectorAll('.vtinp').forEach(i=>i.onchange=e=>{DATA.obras.forEach(o=>o.servicos.forEach(s=>{if(s.id===i.dataset.s)s.valorTotal=parseBRL(e.target.value);}));save(DATA);render();});
