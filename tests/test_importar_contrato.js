@@ -20,7 +20,7 @@ const fs=require('fs');
     if(path==='/rest/v1/rpc/gravar_lote'){ const j=JSON.parse(req.postData()); const v={}; j.p_ops.forEach(o=>{ if(o.t==='doc'){ const c=S.docs[o.path]; if(o.del) delete S.docs[o.path]; else { S.docs[o.path]={data:o.data,versao:(c?c.versao:0)+1}; v[o.path]=S.docs[o.path].versao; } } }); return ok_({versoes:v}); }
     if(path.startsWith('/storage/v1/object/contratos/')){ const k=decodeURIComponent(path.replace('/storage/v1/object/contratos/','')); if(m==='POST'){ S.storage[k]=1; return ok_({Key:k}); } if(m==='DELETE'){ delete S.storage[k]; return ok_({}); } }
     if(path.startsWith('/storage/v1/object/sign/contratos/')) return ok_({signedURL:'/object/sign/contratos/x?token=t'});
-    if(path==='/functions/v1/ler-contrato') return ok_({ok:true,dados:DADOS});
+    if(path==='/functions/v1/ler-contrato'){ S.ler=JSON.parse(req.postData()); return ok_({ok:true,dados:DADOS}); }
     return ok_({message:'rota '+path},404);
   });
   await p.goto('file:///home/claude/financeiro-et-projetos/index.html'); await p.waitForTimeout(300);
@@ -29,7 +29,7 @@ const fs=require('fs');
   fs.writeFileSync('/tmp/ct.pdf','%PDF-1.4\n%fake');
   T('botão de importar aparece para admin', await p.locator('#importCt').count()===1);
   await p.setInputFiles('#importCt','/tmp/ct.pdf'); await p.waitForSelector('#ci_criar',{timeout:5000});
-  T('PDF enviado ao armazenamento', Object.keys(S.storage).length===1, Object.keys(S.storage));
+  T('PDF lido direto, sem guardar no armazenamento', Object.keys(S.storage).length===0 && S.ler && typeof S.ler.pdf==='string' && !S.ler.path, Object.keys(S.storage));
   T('formulário preenchido', (await p.inputValue('#ci_nome'))==='Metropolitan Marista' && (await p.inputValue('#ci_cod'))==='CT 714-06' && (await p.inputValue('#ci_val'))==='1000');
   T('tipo sugerido = Elétrica', (await p.$eval('#ci_tipo',s=>s.selectedOptions[0].textContent))==='Elétrica');
   T('texto do contrato escapado (sem HTML injetado)', await p.evaluate(()=>!document.querySelector('#ciModal li i')&&document.querySelector('#ci_cli').value.includes('<b>SPE</b>')&&document.querySelector('#ciModal details li').textContent.includes('<i>1</i>')));
@@ -38,13 +38,13 @@ const fs=require('fs');
   T('obra criada com 3 etapas 10/30/60%', o.etapasPagamento.map(e=>e.pct).join()==='10,30,60', o.etapasPagamento.map(e=>e.pct));
   T('cliente e documento do contrato', o.cliente.documento==='50.791.681/0002-02' && o.cliente.construtora==='EBM');
   T('serviço com valor 1000', o.servicos[0].valorTotal===1000);
-  T('contrato anexado', o.documentos.length===1 && o.documentos[0].tipo==='Contrato' && S.storage[o.documentos[0].path]);
+  T('contrato não fica armazenado', o.documentos.length===0);
   T('obra gravada no servidor', Object.keys(S.docs).some(k=>k==='obras/'+o.id));
   T('seção Documentos visível', (await p.content()).includes('Documentos (contrato, proposta, aditivos)'));
   await p.setInputFiles('.docArq','/tmp/ct.pdf'); await p.waitForTimeout(1500);
-  T('segundo documento anexado', (await p.evaluate(id=>DATA.obras.find(x=>x.id===id).documentos.length,o.id))===2);
+  T('segundo documento anexado', (await p.evaluate(id=>DATA.obras.find(x=>x.id===id).documentos.length,o.id))===1 && Object.keys(S.storage).length===1);
   await p.click('.docdel >> nth=0'); await p.waitForTimeout(800);
-  T('documento removido e arquivo apagado', (await p.evaluate(id=>DATA.obras.find(x=>x.id===id).documentos.length,o.id))===1 && Object.keys(S.storage).length===1);
+  T('documento removido e arquivo apagado', (await p.evaluate(id=>DATA.obras.find(x=>x.id===id).documentos.length,o.id))===0 && Object.keys(S.storage).length===0);
   T('sem erros de JS', errs.length===0, errs);
   console.log(ok+' ok, '+ko+' falhas'); await b.close(); process.exit(ko?1:0);
 })();

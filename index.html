@@ -557,6 +557,14 @@ async function docLink(path){
   const j=await r.json(); return SB_URL+'/storage/v1'+j.signedURL;
 }
 async function docApagarArquivo(path){ try{ await sbReq('/storage/v1/object/contratos/'+path,{method:'DELETE'}); }catch(e){} }
+// Leitura direta: o PDF é enviado só para ler, sem ser guardado em lugar nenhum
+function arquivoBase64(file){ return new Promise((ok,ko)=>{ const fr=new FileReader(); fr.onload=()=>ok(String(fr.result).split(',')[1]||''); fr.onerror=()=>ko(new Error('Não foi possível abrir o arquivo.')); fr.readAsDataURL(file); }); }
+async function docLerContratoDireto(file){
+  if(file.size>20*1024*1024) throw new Error('O arquivo passa de 20 MB.');
+  const pdf=await arquivoBase64(file);
+  const r=await sbReq('/functions/v1/ler-contrato',{method:'POST',body:JSON.stringify({pdf})});
+  const j=await r.json().catch(()=>({})); if(!r.ok||!j.ok) throw new Error(j.erro||('Erro '+r.status)); return j.dados;
+}
 async function docLerContrato(path){
   const r=await sbReq('/functions/v1/ler-contrato',{method:'POST',body:JSON.stringify({path})});
   const j=await r.json().catch(()=>({})); if(!r.ok||!j.ok) throw new Error(j.erro||('Erro '+r.status)); return j.dados;
@@ -600,18 +608,16 @@ function abrirImportarContrato(file){
   caixa.style.cssText='background:#fff;color:#222;width:100%;max-width:820px;border-radius:10px;padding:22px;font:14px/1.45 system-ui,sans-serif;margin:auto;';
   d.appendChild(caixa); document.body.appendChild(d);
   const fechar=()=>d.remove();
-  caixa.innerHTML='<h3 style="margin:0 0 8px;">Lendo o contrato…</h3><p class="small" id="ciSt">Enviando o arquivo.</p><button class="btn secondary" id="ciCancel">Cancelar</button>';
+  caixa.innerHTML='<h3 style="margin:0 0 8px;">Lendo o contrato…</h3><p class="small" id="ciSt">Lendo o PDF (ele não fica guardado). Leva de 20 a 60 segundos…</p><button class="btn secondary" id="ciCancel">Cancelar</button>';
   let cancelado=false, caminho=null;
   caixa.querySelector('#ciCancel').onclick=()=>{ cancelado=true; if(caminho) docApagarArquivo(caminho); fechar(); };
   (async()=>{
     try{
-      caminho=await docEnviar(obraId,file); if(cancelado) return;
-      const st=caixa.querySelector('#ciSt'); if(st) st.textContent='Arquivo guardado. A leitura leva de 20 a 60 segundos…';
-      const c=await docLerContrato(caminho); if(cancelado) return;
+      const c=await docLerContratoDireto(file); if(cancelado) return;
       ciRevisao(caixa,c,{obraId,caminho,file,fechar});
     }catch(err){
       if(cancelado) return;
-      caixa.innerHTML='<h3 style="margin:0 0 8px;">Não foi possível ler o contrato</h3><p></p><div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn" id="ciManual">Criar a obra manualmente e anexar o PDF</button> <button class="btn secondary" id="ciFechar">Fechar</button></div>';
+      caixa.innerHTML='<h3 style="margin:0 0 8px;">Não foi possível ler o contrato</h3><p></p><div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn" id="ciManual">Criar a obra manualmente</button> <button class="btn secondary" id="ciFechar">Fechar</button></div>';
       caixa.querySelector('p').textContent=err.message;
       caixa.querySelector('#ciFechar').onclick=()=>{ if(caminho) docApagarArquivo(caminho); fechar(); };
       caixa.querySelector('#ciManual').onclick=()=>{ ciRevisao(caixa,{parcelas:[],contratante:{},contratada:{},observacoes:[],camposIncertos:['Leitura automática indisponível: preencha os campos.']},{obraId,caminho,file,fechar}); };

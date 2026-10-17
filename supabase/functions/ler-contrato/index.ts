@@ -96,14 +96,23 @@ Deno.serve(async (req) => {
     const { data: me } = await admin.from("profiles").select("role,email").eq("user_id", u.user.id).maybeSingle();
     if (me?.role !== "admin") return json({ erro: "Somente o administrador pode ler contratos" }, 403);
 
-    const { path } = await req.json();
-    if (typeof path !== "string" || !/^obras\/[A-Za-z0-9_.~:@+-]{1,120}\/[A-Za-z0-9_.~:@+\- ]{1,200}$/.test(path) || path.includes("..")) {
-      return json({ erro: "Arquivo inválido" }, 400);
+    const corpo = await req.json();
+    let bytes: Uint8Array; let ref = "";
+    if (typeof corpo.pdf === "string") {
+      // Envio direto (sem guardar o arquivo): o PDF vem em base64 e só é repassado à leitura
+      if (corpo.pdf.length > 28 * 1024 * 1024) return json({ erro: "O arquivo é grande demais para leitura direta (máx. ~20 MB)." }, 413);
+      try { bytes = Uint8Array.from(atob(corpo.pdf), (c) => c.charCodeAt(0)); } catch { return json({ erro: "Arquivo inválido." }, 400); }
+      ref = "envio-direto";
+    } else {
+      const path = corpo.path;
+      if (typeof path !== "string" || !/^obras\/[A-Za-z0-9_.~:@+-]{1,120}\/[A-Za-z0-9_.~:@+\- ]{1,200}$/.test(path) || path.includes("..")) {
+        return json({ erro: "Arquivo inválido" }, 400);
+      }
+      const { data: blob, error: eDown } = await admin.storage.from("contratos").download(path);
+      if (eDown || !blob) return json({ erro: "Arquivo não encontrado no armazenamento: " + (eDown?.message || "") }, 404);
+      if (blob.size > 30 * 1024 * 1024) return json({ erro: "O arquivo passa de 30 MB." }, 413);
+      bytes = new Uint8Array(await blob.arrayBuffer()); ref = path;
     }
-    const { data: blob, error: eDown } = await admin.storage.from("contratos").download(path);
-    if (eDown || !blob) return json({ erro: "Arquivo não encontrado no armazenamento: " + (eDown?.message || "") }, 404);
-    if (blob.size > 30 * 1024 * 1024) return json({ erro: "O arquivo passa de 30 MB." }, 413);
-    const bytes = new Uint8Array(await blob.arrayBuffer());
     if (String.fromCharCode(...bytes.slice(0, 4)) !== "%PDF") return json({ erro: "O arquivo não é um PDF." }, 400);
 
     const r = await fetch("https://api.anthropic.com/v1/messages", {
@@ -125,7 +134,7 @@ Deno.serve(async (req) => {
     const uso = j.usage || {};
     const dados = (j.content || []).find((c: { type: string }) => c.type === "tool_use")?.input;
     if (!dados) return json({ erro: "A leitura não retornou dados." }, 502);
-    await admin.from("auditoria").insert({ user_id: u.user.id, user_email: me.email, tabela: "contrato", chave: path, operacao: "LEITURA_CONTRATO", depois: { tokens_entrada: uso.input_tokens, tokens_saida: uso.output_tokens } });
+    await admin.from("auditoria").insert({ user_id: u.user.id, user_email: me.email, tabela: "contrato", chave: ref, operacao: "LEITURA_CONTRATO", depois: { tokens_entrada: uso.input_tokens, tokens_saida: uso.output_tokens } });
     return json({ ok: true, dados, uso });
   } catch (e) {
     return json({ erro: String((e as Error).message || e) }, 500);
