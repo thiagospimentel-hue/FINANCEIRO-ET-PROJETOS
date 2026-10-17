@@ -22,5 +22,8 @@ const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwrig
   // dados antigos (parcelas pagas congeladas) são descongelados ao carregar
   const mg=await p.evaluate(()=>{ const m=DATA.obras[0].equipe[0]; m.etapas.forEach(e=>{ if(e.mensal) e.valorFixo=5000; }); window.__migCong=false; ensureTiposPadrao(DATA); return {flag:window.__migCong, fixos:m.etapas.filter(e=>temValor(e.valorFixo)).length}; });
   T('migração descongela parcelas automáticas antigas', mg.flag===true&&mg.fixos===0, mg);
+    // dados reais: parcelas aprovadas à mão (sem auto) e congeladas também são liberadas
+  const mg2=await p.evaluate(()=>{ const m=DATA.obras[0].equipe[0]; m.etapas.forEach(e=>{ if(e.mensal){ delete e.auto; e.aprovado=true; e.valorFixo=4000; } }); window.__migCong=false; ensureTiposPadrao(DATA); return {flag:window.__migCong, fixos:m.etapas.filter(e=>temValor(e.valorFixo)).length, trav:membroPctTravado(m)}; });
+  T('parcelas de média aprovadas à mão também descongelam', mg2.flag===true&&mg2.fixos===0&&mg2.trav===false, mg2);
   T('sem erros', errs.length===0, errs); console.log(ok+' ok, '+ko+' falhas'); await b.close(); process.exit(ko?1:0);
 })();

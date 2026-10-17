@@ -23,7 +23,7 @@ const fs=require('fs');
     if(path==='/functions/v1/ler-contrato'){ S.ler=JSON.parse(req.postData()); return ok_({ok:true,dados:DADOS}); }
     return ok_({message:'rota '+path},404);
   });
-  const etapas=[0,1,2].map(i=>({nome:'Parcela '+(i+1)+'/3',pct:30,mensal:true,aprovado:true,auto:true,concluido:true,pagarEm:'2026-0'+(7+i)+'-05',data:'2026-0'+(7+i)+'-05',valorFixo:3000,baixas:[{id:'b'+i,tipo:'saida',valor:3000,data:'2026-10-16'}]}));
+  const etapas=[0,1,2].map(i=>({nome:'Parcela '+(i+1)+'/3',pct:30,mensal:true,aprovado:true,concluido:true,pagarEm:'2026-0'+(7+i)+'-05',data:'2026-0'+(7+i)+'-05',valorFixo:3000,baixas:[{id:'b'+i,tipo:'saida',valor:3000,data:'2026-10-16'}]}));
   S.docs['obras/o1']={versao:1,data:{id:'o1',nomeObra:'Obra 1',codigo:'1',status:'andamento',empresaId:'',cliente:{nome:'c'},servicos:[{id:'s',tipoId:'t1',valorTotal:100000,imposto:0,despesas:[],aditivos:[]}],etapasPagamento:[],despesasObra:[],equipe:[{id:'q',colaboradorId:'u1',papel:'C',pct:15,baseIds:[],modelo:'media',media:{inicio:'2026-07',meses:3,ret:10,dia:5},etapas}]}};
   S.docs['cfg/main']={versao:1,data:{tiposServico:[{id:'t1',nome:'E'}],colaboradores:[{id:'u1',nome:'Bruno',cargo:'C'}],minhasEmpresas:[]}};
   await p.goto('file:///home/claude/financeiro-et-projetos/index.html'); await p.waitForTimeout(300);

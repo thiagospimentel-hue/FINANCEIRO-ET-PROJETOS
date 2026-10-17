@@ -873,7 +873,7 @@ function ensureTiposPadrao(d){
 // Dados antigos: "pago" vira uma baixa sem lançamento no caixa; entregas já concluídas ficam aprovadas e com valor congelado.
 const SOCIOS_PADRAO=['renner','bruno henrique','jordanna','valentina','guilherme silveira','gabriel ofugi','ocirley'];
 function migrarBaixas(d){
-  (d.obras||[]).forEach(o=>(o.equipe||[]).forEach(m=>{ if(m.modelo!=='media'&&m.modelo!=='unico') return; if((m.etapas||[]).some(e=>e.auto&&temValor(e.valorFixo))){ descongelarAuto(m); window.__migCong=true; } }));
+  (d.obras||[]).forEach(o=>(o.equipe||[]).forEach(m=>{ if(m.modelo!=='media'&&m.modelo!=='unico') return; if(descongelarAuto(m)>0) window.__migCong=true; }));
   if(!d.caixa) d.caixa=[];
   if(!d.contas) d.contas=[];
   if(!d.historico) d.historico=[];
@@ -1495,8 +1495,10 @@ function sincRetencoes(obra){
 }
 // Média/pagamento único (aprovação automática): o devido acompanha o % do vínculo mesmo depois de pago;
 // a diferença aparece na conferência mensal (pagar a mais / descontar). Etapas aprovadas manualmente continuam congeladas.
-function descongelarAuto(m){ (m.etapas||[]).forEach(e=>{ if(e.auto&&temValor(e.valorFixo)) delete e.valorFixo; }); }
-function membroPctTravado(m){ return (m.etapas||[]).some(e=>(e.aprovado&&!e.auto)||(!e.auto&&(e.baixas||[]).length>0)); }
+// parcela de média / pagamento único = aprovação automática (mesmo que tenha sido marcada à mão antes)
+const etapaAutoPagto=(m,e)=>!!(e.unico||(m.modelo==='media'&&e.mensal&&!e.retencao)||(e.auto&&!e.retencao&&(m.modelo==='media'||m.modelo==='unico')));
+function descongelarAuto(m){ let n=0; (m.etapas||[]).forEach(e=>{ if(!etapaAutoPagto(m,e)) return; if(e.aprovado&&!e.auto) e.auto=true; if(temValor(e.valorFixo)){ delete e.valorFixo; n++; } }); return n; }
+function membroPctTravado(m){ return (m.etapas||[]).some(e=>!etapaAutoPagto(m,e)&&((e.aprovado&&!e.auto)||(!e.auto&&(e.baixas||[]).length>0))); }
 function membroTemMovimento(m){ return (m.etapas||[]).some(e=>(e.baixas||[]).length>0||(e.aprovado&&!e.auto)); }
 // modo: 'media' | 'entrega'; obraId vazio = todas as obras do colaborador. Não mexe em quem já tem aprovação/pagamento.
 // Remarca a média preservando as parcelas que já têm pagamento: o que falta é redistribuído nos demais meses do novo período
@@ -1625,7 +1627,7 @@ function registrarPagoMes(uid,ym,dataIso,contaId){
   const es=etapasMesMedia(uid,ym); if(!es.length) return false;
   const tot=es.reduce((a,x)=>a+x.v,0); let rest=r2(val); const regs=[];
   es.forEach((x,i)=>{ const parte=i===es.length-1?rest:r2(tot>0?val*x.v/tot:val/es.length); rest=r2(rest-parte); if(!(parte>0)) return;
-    if(!temValor(x.e.valorFixo)&&!x.e.auto) x.e.valorFixo=x.v;
+    if(!temValor(x.e.valorFixo)&&!etapaAutoPagto(x.m,x.e)) x.e.valorFixo=x.v;
     const b=lancarBaixa(x.e,{tipo:'saida',valor:parte,data:dataIso,desc:'Pagamento — '+colabNome(uid)+' — '+x.o.nomeObra+' — '+(x.m.papel||'Equipe')+' / '+x.e.nome,obraId:x.o.id,colaboradorId:uid,origem:{tipo:'equipe',obraId:x.o.id,refId:x.m.id+':'+x.e.nome},contaId:contaId||undefined});
     if(b) regs.push({o:x.o.id,mi:x.mi,ei:x.ei,b:b.id,v:parte}); });
   if(!regs.length) return false;
