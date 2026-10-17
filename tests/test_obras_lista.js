@@ -19,5 +19,8 @@ const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwrig
   T('voltar retorna à lista', await p.locator('.obraLinha').count()===120);
   await p.selectOption('#filterStatus','concluida'); await p.waitForTimeout(200);
   T('filtro de status continua funcionando na lista (5)', await p.locator('.obraLinha').count()===5);
+  await p.evaluate(()=>{ FILTER_STATUS=''; const o=DATA.obras[10]; o.etapasPagamento=[{id:'e1',nome:'Entrada',pct:50,baixas:[{id:'b',tipo:'entrada',valor:5000,data:'2026-01-01'}]},{id:'e2',nome:'Final',pct:50,vencimento:'2020-01-01',baixas:[]}]; OPEN_OBRA=null; render(); });
+  const ar=await p.evaluate(()=>{ const tr=document.querySelector('.obraLinha[data-o="o10"]'); return tr.innerText.replace(/\s+/g,' '); });
+  T('coluna A receber mostra saldo e vencido da obra', /A receber/i.test(await p.innerText('body')) && /5\.000,00/.test(ar) && /vencido/.test(ar), ar);
   T('sem erros', errs.length===0, errs); console.log(ok+' ok, '+ko+' falhas'); await b.close(); process.exit(ko?1:0);
 })();
