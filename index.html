@@ -1491,6 +1491,10 @@ function sincRetencoes(obra){
     if(fim){ e.concluido=true; if(!e.data) e.data=hojeISO(); } else { e.concluido=false; e.data=''; }
   }));
 }
+// Média/pagamento único (aprovação automática): o devido acompanha o % do vínculo mesmo depois de pago;
+// a diferença aparece na conferência mensal (pagar a mais / descontar). Etapas aprovadas manualmente continuam congeladas.
+function descongelarAuto(m){ (m.etapas||[]).forEach(e=>{ if(e.auto&&temValor(e.valorFixo)) delete e.valorFixo; }); }
+function membroPctTravado(m){ return (m.etapas||[]).some(e=>(e.aprovado&&!e.auto)||(!e.auto&&(e.baixas||[]).length>0)); }
 function membroTemMovimento(m){ return (m.etapas||[]).some(e=>(e.baixas||[]).length>0||(e.aprovado&&!e.auto)); }
 // modo: 'media' | 'entrega'; obraId vazio = todas as obras do colaborador. Não mexe em quem já tem aprovação/pagamento.
 // Remarca a média preservando as parcelas que já têm pagamento: o que falta é redistribuído nos demais meses do novo período
@@ -1708,7 +1712,7 @@ function aplicarPadraoColab(obraId,colab,sobrescrever){
     const tipo=b.id===''?'':(obra.servicos.find(sv=>sv.id===b.id)||{}).tipoId;
     const v=+pd[tipo]||0; if(!(v>0)) return;
     const mi=M.cel[colab+'|'+b.id];
-    if(mi!==undefined){ const m=obra.equipe[mi]; if(!sobrescrever||membroTemMovimento(m)||(m.pct===v)) return; }
+    if(mi!==undefined){ const m=obra.equipe[mi]; if(!sobrescrever||membroPctTravado(m)||(m.pct===v)) return; }
     equipeGridSet(obraId,colab,b.id,v); n++;
   });
   return n;
@@ -1720,7 +1724,7 @@ function equipeGridSet(obraId,colab,base,pct){
   pct=Math.max(0,Math.round((parseFloat(pct)||0)*1e4)/1e4);
   if(mi!==undefined){
     const m=obra.equipe[mi];
-    if(pct>0) m.pct=pct;
+    if(pct>0){ if(m.pct!==pct) descongelarAuto(m); m.pct=pct; }
     else if(equipeTemHistorico(m)) m.pct=0;
     else obra.equipe.splice(mi,1);
   } else if(pct>0){
@@ -3565,7 +3569,7 @@ function attachMain(){
       const o=DATA.obras.find(x=>x.id===b.dataset.o); if(!o) return;
       (o.equipe||[]).forEach(m=>{ if(m.colaboradorId===b.dataset.c) m.inativo=true; }); logAcao('Integrante inativado: '+colabNome(b.dataset.c)+' — '+o.nomeObra); save(DATA); render();
     });
-    document.querySelectorAll('.equipepct').forEach(i=>i.onchange=e=>{const obra=DATA.obras.find(o=>o.id===i.dataset.o);obra.equipe[i.dataset.i].pct=parseFloat(e.target.value)||0;save(DATA);render();});
+    document.querySelectorAll('.equipepct').forEach(i=>i.onchange=e=>{const obra=DATA.obras.find(o=>o.id===i.dataset.o);const mq=obra.equipe[i.dataset.i], nv=parseFloat(e.target.value)||0; if(mq.pct!==nv) descongelarAuto(mq); mq.pct=nv;save(DATA);render();});
     document.querySelectorAll('.addserv').forEach(b=>b.onclick=()=>{
       const obra=DATA.obras.find(o=>o.id===b.dataset.o);
       obra.servicos.push({id:'s'+Date.now(),tipoId:DATA.tiposServico[0]?.id||'',valorTotal:0,imposto:17,despesas:[],aditivos:[]});
