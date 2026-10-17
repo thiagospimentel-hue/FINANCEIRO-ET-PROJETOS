@@ -1292,18 +1292,19 @@ const ICONS={
   resumo:'<path d="M6 3h9l4 4v14H6zM14 3v5h5M9 13h7M9 17h7"/>',
   incc:'<path d="M3 17l6-6 4 4 8-8M15 7h6v6"/>',
   contas:'<path d="M3 6h18v12H3zM3 10h18M7 15h4"/>',
+  pagmes:'<path d="M7 3v3M17 3v3M4 8h16M5 5h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zM9 14h6M9 17h4"/>',
   caixa:'<path d="M12 3v18M17 7.5c0-1.9-2.2-3-5-3s-5 1.1-5 3 2.2 2.8 5 3.5 5 1.6 5 3.5-2.2 3-5 3-5-1.1-5-3"/>',
   colaboradores:'<path d="M16 20v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2M9.5 10a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM21 20v-2a4 4 0 0 0-3-3.9M16 3.1a3.5 3.5 0 0 1 0 6.8"/>'
 };
 const ico=n=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[n]||''}</svg>`;
-const TAB_INFO={fixas:['Despesas fixas','Aluguel, contabilidade e impostos/taxas fixas — por empresa, todo mês'],aprovacoes:['Aprovações','Entregas concluídas pela equipe aguardando a sua aprovação'],dashboard:['Dashboard','Visão geral do caixa, cobranças e obras'],obras:['Obras / Clientes','Contratos, disciplinas, equipe e aditivos'],resumo:['Resumo p/ Cobrança','Etapas, NF, vencimentos e recebimentos'],incc:['Reajuste INCC','Índices e aplicação por obra — sempre manual'],contas:['Contas a pagar','Despesas, impostos e pagamentos da equipe'],caixa:['Fluxo de Caixa','Entradas, saídas e conferência'],colaboradores:['Colaboradores','Cadastro, aprovações, pagamentos e documentos']};
+const TAB_INFO={fixas:['Despesas fixas','Aluguel, contabilidade e impostos/taxas fixas — por empresa, todo mês'],aprovacoes:['Aprovações','Entregas concluídas pela equipe aguardando a sua aprovação'],dashboard:['Dashboard','Visão geral do caixa, cobranças e obras'],obras:['Obras / Clientes','Contratos, disciplinas, equipe e aditivos'],resumo:['Resumo p/ Cobrança','Etapas, NF, vencimentos e recebimentos'],incc:['Reajuste INCC','Índices e aplicação por obra — sempre manual'],contas:['Contas a pagar','Despesas, impostos e pagamentos da equipe'],pagmes:['Equipe no mês','O que pagar a cada colaborador no mês: devido, pago e diferença'],caixa:['Fluxo de Caixa','Entradas, saídas e conferência'],colaboradores:['Colaboradores','Cadastro, aprovações, pagamentos e documentos']};
 function mainView(){
   const nome=SESSION.role==='admin'?'Admin / Financeiro':DATA.colaboradores.find(u=>u.id===SESSION.userId)?.nome;
   const admin=SESSION.role==='admin';
   const nPend=aprovacoesPendentes().length;
   const tabBtn=(k,l)=>`<button data-tab="${k}" class="${TAB===k?'active':''}">${ico(k)}<span>${l}</span>${k==='aprovacoes'&&nPend?`<em class="badgeN">${nPend}</em>`:''}</button>`;
   const tabsHtml=admin?`<nav class="tabs">
-      ${tabBtn('dashboard','Dashboard')}${tabBtn('aprovacoes','Aprovações')}${tabBtn('obras','Obras / Clientes')}${tabBtn('resumo','Resumo p/ Cobrança')}${tabBtn('incc','Reajuste INCC')}${tabBtn('contas','Contas a pagar')}${tabBtn('fixas','Despesas fixas')}${tabBtn('caixa','Fluxo de Caixa')}${tabBtn('colaboradores','Colaboradores')}
+      ${tabBtn('dashboard','Dashboard')}${tabBtn('aprovacoes','Aprovações')}${tabBtn('obras','Obras / Clientes')}${tabBtn('resumo','Resumo p/ Cobrança')}${tabBtn('incc','Reajuste INCC')}${tabBtn('contas','Contas a pagar')}${tabBtn('pagmes','Equipe no mês')}${tabBtn('fixas','Despesas fixas')}${tabBtn('caixa','Fluxo de Caixa')}${tabBtn('colaboradores','Colaboradores')}
     </nav>`:'';
   let body='';
   if(admin){
@@ -1313,6 +1314,7 @@ function mainView(){
     else if(TAB==='resumo') body=resumoView();
     else if(TAB==='incc') body=inccView();
     else if(TAB==='contas') body=contasView();
+    else if(TAB==='pagmes') body=pagMesView();
     else if(TAB==='fixas') body=fixasView();
     else if(TAB==='caixa') body=caixaView();
     else body=colaboradoresView();
@@ -2725,6 +2727,60 @@ function fixasView(){
 }
 function mesNomeCompleto(ym){ const [y,m]=ym.split('-'); const n=['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'][parseInt(m,10)-1]; return n.charAt(0).toUpperCase()+n.slice(1)+' de '+y; }
 function mesDeslocar(ym,delta){ let [y,m]=ym.split('-').map(Number); m+=delta; while(m>12){m-=12;y++;} while(m<1){m+=12;y--;} return y+'-'+String(m).padStart(2,'0'); }
+
+// ===== Equipe no mês: o que pagar a cada colaborador (média + pagamento único + entregas aprovadas + despesas vinculadas) =====
+let PM_MES=new Date().toISOString().slice(0,7), PM_FILTRO='', PM_BUSCA='', PM_ABERTO='';
+function pagMesDados(ym){
+  const hoje=hojeISO().slice(0,7); const out=[];
+  (DATA.colaboradores||[]).forEach(u=>{
+    const itens=[]; let dev=0,pago=0,ant=0;
+    // média / pagamento único: conferência mensal (devido × pago digitado ou baixado)
+    const conf=confMensalColab(u.id); const r=conf.find(x=>x.ym===ym);
+    if(r){ dev+=r.dev; pago+=r.pago; ant+=(r.acum-r.dif);
+      etapasMesMedia(u.id,ym).forEach(x=>itens.push({obra:x.o.nomeObra,txt:x.e.unico?'Pagamento único':x.e.nome.replace(/ — .*$/,''),v:x.v,tipo:x.e.unico?'unico':'media'})); }
+    else { const prev=conf.filter(x=>x.ym<ym); if(prev.length) ant+=prev[prev.length-1].acum; }
+    // entregas aprovadas (pagamento por entrega) e despesas da obra vinculadas
+    DATA.obras.forEach(o=>{ if(!obraVisivel(o)) return;
+      (o.equipe||[]).forEach(m=>{ if(m.colaboradorId!==u.id||m.inativo) return;
+        (m.etapas||[]).forEach(e=>{ if(!e.pct||!e.aprovado||e.auto||etapaAutoPagto(m,e)) return;
+          const v=valorEquipeEtapa(o,m,e), pg=baixaTotal(e); const mes=(e.pagarEm||e.data||'').slice(0,7)||hoje;
+          if(mes===ym){ dev+=v; pago+=Math.min(pg,v); itens.push({obra:o.nomeObra,txt:(m.papel||'Equipe')+' — '+e.nome,v,tipo:'entrega',pg}); }
+          else if(mes<ym&&v-pg>0.005){ ant+=v-pg; itens.push({obra:o.nomeObra,txt:(m.papel||'Equipe')+' — '+e.nome+' (de '+mes.slice(5)+'/'+mes.slice(0,4)+')',v:v-pg,tipo:'atraso'}); } }); });
+      (o.despesasObra||[]).forEach(d=>{ if(d.colaboradorId!==u.id) return; const v=despObraValor(o,d), pg=baixaTotal(d); if(!(v>0.004)) return; const mes=(d.vencimento||'').slice(0,7)||hoje;
+        if(mes===ym){ dev+=v; pago+=Math.min(pg,v); itens.push({obra:o.nomeObra,txt:d.nome+' (despesa da obra)',v,tipo:'despesa',pg}); }
+        else if(mes<ym&&v-pg>0.005){ ant+=v-pg; itens.push({obra:o.nomeObra,txt:d.nome+' (despesa, de '+mes.slice(5)+'/'+mes.slice(0,4)+')',v:v-pg,tipo:'atraso'}); } }); });
+    if(!itens.length&&Math.abs(dev)<0.005&&Math.abs(ant)<0.005) return;
+    dev=r2(dev); pago=r2(pago); ant=r2(ant);
+    out.push({u,dev,pago,ant,apagar:r2(dev-pago+ant),itens,doc:docTipoColab(u)==='recibo'?'Recibo':'NF'});
+  });
+  return out.sort((a,b)=>(a.u.nome||'').localeCompare(b.u.nome||'','pt-BR'));
+}
+function pagMesView(){
+  const ym=PM_MES; let rows=pagMesDados(ym);
+  const tot=rows.reduce((a,r)=>({dev:a.dev+r.dev,pago:a.pago+r.pago,ant:a.ant+r.ant,ap:a.ap+r.apagar}),{dev:0,pago:0,ant:0,ap:0});
+  const q=PM_BUSCA.toLowerCase().trim();
+  if(q) rows=rows.filter(r=>(r.u.nome||'').toLowerCase().includes(q));
+  if(PM_FILTRO==='falta') rows=rows.filter(r=>r.apagar>0.005);
+  else if(PM_FILTRO==='quitado') rows=rows.filter(r=>r.apagar<=0.005);
+  const nFalta=pagMesDados(ym).filter(r=>r.apagar>0.005).length;
+  const prox=[]; for(let i=0;i<6;i++){ const m=mesDeslocar(ym,i); prox.push({m,dev:pagMesDados(m).reduce((a,r)=>a+r.dev,0)}); }
+  const mxP=Math.max(1,...prox.map(x=>x.dev));
+  const chip=(k,l)=>`<button class="btn ${PM_FILTRO===k?'':'secondary'} pmFiltro" data-f="${k}" style="padding:4px 12px;">${l}</button>`;
+  const lin=rows.map(r=>{ const ab=PM_ABERTO===r.u.id; const cls=r.apagar>0.005?'neg':r.apagar<-0.005?'pos':'';
+    const sit=r.apagar>0.005?`<span class="neg">falta ${fmt(r.apagar)}</span>`:r.apagar<-0.005?`<span class="pos">pagou a mais ${fmt(-r.apagar)}</span>`:'<span class="pos">✔ quitado</span>';
+    const det=ab?`<tr><td colspan="7" style="background:var(--accent-bg);"><table style="margin:4px 0;"><tr><th>Obra</th><th>Item</th><th class="num">Valor</th></tr>${r.itens.map(x=>`<tr><td>${esc(x.obra)}</td><td>${esc(x.txt)}</td><td class="num">${fmt(x.v)}</td></tr>`).join('')||'<tr><td colspan="3" class="small">Sem itens neste mês (só saldo de meses anteriores).</td></tr>'}</table><button class="btn secondary pmColab" data-u="${esc(r.u.id)}">Abrir colaborador (registrar pagamento)</button></td></tr>`:'';
+    return `<tr class="pmLinha" data-u="${esc(r.u.id)}" style="cursor:pointer;"><td><b>${esc(r.u.nome||'')}</b><div class="small">${esc(r.u.cargo||'')}</div></td><td>${r.doc}</td><td class="num">${fmt(r.dev)}</td><td class="num">${fmt(r.pago)}</td><td class="num ${r.ant>0.005?'neg':r.ant<-0.005?'pos':''}">${fmt(r.ant)}</td><td class="num ${cls}"><b>${fmt(r.apagar)}</b></td><td>${sit}</td></tr>${det}`; }).join('');
+  return `<div class="card"><div class="row-flex" style="justify-content:space-between;flex-wrap:wrap;gap:8px;"><h2 style="margin:0;">Equipe no mês — ${esc(mesAnoLabel(ym+'-01'))}</h2>
+    <div class="row-flex" style="gap:6px;"><button class="btn secondary pmMes" data-d="-1">‹</button><input type="month" id="pmMesIn" value="${esc(ym)}"><button class="btn secondary pmMes" data-d="1">›</button><button class="btn secondary pmMes" data-d="0">Mês atual</button></div></div>
+    <div class="kpis" style="margin-top:10px;"><div class="kpi"><div class="k">Devido no mês</div><div class="v">${fmt(tot.dev)}</div></div><div class="kpi"><div class="k">Já pago</div><div class="v pos">${fmt(tot.pago)}</div></div><div class="kpi"><div class="k">Saldo de meses anteriores</div><div class="v ${tot.ant>0.005?'neg':''}">${fmt(tot.ant)}</div></div><div class="kpi"><div class="k">Total a pagar agora</div><div class="v ${tot.ap>0.005?'neg':'pos'}">${fmt(tot.ap)}</div></div></div>
+    <div style="margin-top:10px;"><span class="small">Devido nos próximos meses</span><div style="display:flex;gap:6px;align-items:flex-end;margin-top:4px;">${prox.map(x=>`<div style="flex:1;text-align:center;cursor:pointer;" class="pmIr" data-m="${esc(x.m)}"><div style="height:${Math.round(8+50*x.dev/mxP)}px;background:var(--accent);border-radius:4px 4px 0 0;opacity:${x.m===ym?1:.55};"></div><div class="small">${esc(x.m.slice(5)+'/'+x.m.slice(2,4))}</div><div class="small"><b>${fmt(x.dev)}</b></div></div>`).join('')}</div></div></div>
+  <div class="card"><div class="row-flex" style="justify-content:space-between;flex-wrap:wrap;gap:8px;"><div class="row-flex" style="gap:6px;flex-wrap:wrap;">${chip('','Todos')}${chip('falta','Falta pagar ('+nFalta+')')}${chip('quitado','Quitados')}</div>
+    <div class="row-flex" style="gap:6px;"><input type="text" id="pmBusca" placeholder="Buscar colaborador…" value="${esc(PM_BUSCA)}" style="max-width:220px;"><button class="btn secondary" id="pmCsv">Exportar CSV</button><button class="btn secondary" id="pmImp">Imprimir</button></div></div>
+    <div style="overflow-x:auto;"><table style="margin-top:8px;"><tr><th>Colaborador</th><th>Documento</th><th class="num">Devido no mês</th><th class="num">Já pago</th><th class="num">Meses anteriores</th><th class="num">A pagar</th><th>Situação</th></tr>
+    ${lin||'<tr><td colspan="7" class="small">Nada a pagar para a equipe neste mês/filtro.</td></tr>'}
+    <tr class="hdr"><td>Total (${rows.length})</td><td></td><td class="num">${fmt(rows.reduce((a,r)=>a+r.dev,0))}</td><td class="num">${fmt(rows.reduce((a,r)=>a+r.pago,0))}</td><td class="num">${fmt(rows.reduce((a,r)=>a+r.ant,0))}</td><td class="num">${fmt(rows.reduce((a,r)=>a+r.apagar,0))}</td><td></td></tr></table></div>
+    <p class="small" style="margin-top:6px;">Devido = parcelas de média, pagamentos únicos, entregas aprovadas e despesas de obra vinculadas. “Meses anteriores” = diferença acumulada ainda não acertada (positivo = falta pagar; negativo = pago a mais). Clique no colaborador para ver as obras.</p></div>`;
+}
 function contasView(){
   const eq=equipeAPagarTotal();
   const hoje=hojeISO(), mesHoje=hoje.slice(0,7);
@@ -3762,6 +3818,24 @@ function attachMain(){
     });
   }
 
+  if(TAB==='pagmes' && SESSION.role==='admin'){
+    document.querySelectorAll('.pmMes').forEach(b=>b.onclick=()=>{ PM_MES=+b.dataset.d===0?hojeISO().slice(0,7):mesDeslocar(PM_MES,+b.dataset.d); PM_ABERTO=''; render(); });
+    const mi=document.getElementById('pmMesIn'); if(mi) mi.onchange=()=>{ if(/^\d{4}-\d{2}$/.test(mi.value)){ PM_MES=mi.value; PM_ABERTO=''; render(); } };
+    document.querySelectorAll('.pmIr').forEach(d=>d.onclick=()=>{ PM_MES=d.dataset.m; PM_ABERTO=''; render(); });
+    document.querySelectorAll('.pmFiltro').forEach(b=>b.onclick=()=>{ PM_FILTRO=b.dataset.f; render(); });
+    const pb=document.getElementById('pmBusca'); if(pb) pb.oninput=()=>{ PM_BUSCA=pb.value; const q=pb.value.toLowerCase().trim(); document.querySelectorAll('.pmLinha').forEach(tr=>{ const nome=(tr.querySelector('b')||{}).textContent||''; tr.style.display=!q||nome.toLowerCase().includes(q)?'':'none'; }); };
+    document.querySelectorAll('.pmLinha').forEach(tr=>tr.onclick=()=>{ PM_ABERTO=PM_ABERTO===tr.dataset.u?'':tr.dataset.u; render(); });
+    document.querySelectorAll('.pmColab').forEach(b=>b.onclick=()=>{ SEL_COLAB=b.dataset.u; OPEN_COLAB=null; TAB='colaboradores'; render(); window.scrollTo(0,0); });
+    const csv=document.getElementById('pmCsv'); if(csv) csv.onclick=()=>{
+      const rs=pagMesDados(PM_MES); const q=s=>'"'+String(s).replace(/"/g,'""')+'"'; const n=v=>String(Math.round(v*100)/100).replace('.',',');
+      const linhas=[['Colaborador','Documento','Devido no mês','Já pago','Meses anteriores','A pagar'].map(q).join(';')].concat(rs.map(r=>[q(r.u.nome||''),q(r.doc),n(r.dev),n(r.pago),n(r.ant),n(r.apagar)].join(';')));
+      const blob=new Blob(['﻿'+linhas.join('\r\n')],{type:'text/csv;charset=utf-8'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='equipe-'+PM_MES+'.csv'; document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },500);
+    };
+    const imp=document.getElementById('pmImp'); if(imp) imp.onclick=()=>{
+      const rs=pagMesDados(PM_MES); const t=rs.reduce((a,r)=>a+r.apagar,0);
+      abrirDoc('<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Equipe no mês '+esc(PM_MES)+'</title><style>'+docEstilo()+'table{width:100%;border-collapse:collapse;}td,th{border-bottom:1px solid #ccc;padding:5px 6px;text-align:left;}td.n,th.n{text-align:right;}</style></head><body><h2>Pagamento da equipe — '+esc(mesAnoLabel(PM_MES+'-01'))+'</h2><table><tr><th>Colaborador</th><th>Doc.</th><th class="n">Devido</th><th class="n">Pago</th><th class="n">Anteriores</th><th class="n">A pagar</th></tr>'+rs.map(r=>'<tr><td>'+esc(r.u.nome||'')+'</td><td>'+r.doc+'</td><td class="n">'+fmt(r.dev)+'</td><td class="n">'+fmt(r.pago)+'</td><td class="n">'+fmt(r.ant)+'</td><td class="n">'+fmt(r.apagar)+'</td></tr>').join('')+'<tr><td colspan="5"><b>Total a pagar</b></td><td class="n"><b>'+fmt(t)+'</b></td></tr></table></body></html>');
+    };
+  }
   if(TAB==='contas' && SESSION.role==='admin'){
     const go=document.querySelector('.goObras'); if(go) go.onclick=()=>{TAB='obras';render();};
     document.querySelectorAll('.delconta').forEach(b=>b.onclick=()=>{

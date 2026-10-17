@@ -1,0 +1,34 @@
+const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwright');
+(async()=>{
+  const b=await chromium.launch({executablePath:'/opt/pw-browsers/chromium'});
+  const p=await (await b.newContext({viewport:{width:1500,height:1400},acceptDownloads:true})).newPage(); const errs=[]; p.on('pageerror',e=>errs.push(e.message)); p.on('dialog',d=>d.accept());
+  await p.goto('file:///home/claude/financeiro-et-projetos/index.html'); await p.waitForTimeout(500);
+  let ok=0,ko=0; const T=(n,c,d)=>{c?ok++:ko++;console.log((c?'PASS ':'FAIL ')+n+(d!==undefined?' '+JSON.stringify(d):''));};
+  await p.evaluate(()=>{ SESSION={role:'admin'}; DATA.tiposServico=[{id:'t1',nome:'E'}]; DATA.minhasEmpresas=[]; DATA.caixa=[];
+    DATA.colaboradores=[{id:'u1',nome:'Ana',cargo:'C'},{id:'u2',nome:'Bruno',cargo:'C',socio:true},{id:'u3',nome:'Caio',cargo:'D'}];
+    const mk=(id,v,eq)=>({id,nomeObra:'Obra '+id,codigo:id,status:'andamento',empresaId:'',cliente:{nome:'c'},servicos:[{id:'s'+id,tipoId:'t1',valorTotal:v,imposto:0,despesas:[],aditivos:[]}],etapasPagamento:[],despesasObra:[],equipe:eq});
+    const q=(id,c,pct)=>({id,colaboradorId:c,papel:'C',pct,baseIds:[],etapas:etapasCoordPadrao()});
+    DATA.obras=[mk('o1',100000,[q('q1','u1',10),q('q2','u2',10),q('q3','u3',10)])];
+    aplicarModeloPagamento('u1','media',{inicio:'2026-11',meses:2,ret:0,dia:5,fim:'2026-12',grupoId:'g',grupo:'G'},['o1']);
+    aplicarModeloPagamento('u2','media',{inicio:'2026-11',meses:2,ret:0,dia:5,fim:'2026-12',grupoId:'g',grupo:'G'},['o1']);
+    DATA.colaboradores[0].pagoMes={'2026-11':3000};
+    // Caio: por entrega, 1ª etapa aprovada em out (atrasada) e 2ª aprovada em nov
+    const m=DATA.obras[0].equipe[2]; m.etapas[0].aprovado=true; m.etapas[0].concluido=true; m.etapas[0].data='2026-10-10'; m.etapas[1].aprovado=true; m.etapas[1].concluido=true; m.etapas[1].data='2026-11-12';
+    PM_MES='2026-11'; TAB='pagmes'; render(); });
+  const d=await p.evaluate(()=>pagMesDados('2026-11').map(r=>[r.u.nome,r.dev,r.pago,r.ant,r.apagar]));
+  T('Ana: média 5.000, pago 3.000, falta 2.000', JSON.stringify(d[0])==='["Ana",5000,3000,0,2000]', d[0]);
+  T('Bruno: média 5.000, nada pago', d[1][1]===5000&&d[1][4]===5000, d[1]);
+  T('Caio: entrega de nov + atraso de out', d[2][0]==='Caio'&&d[2][3]>0&&d[2][1]>0&&Math.abs(d[2][4]-(d[2][1]-d[2][2]+d[2][3]))<0.01, d[2]);
+  T('tela mostra os 3 colaboradores e totais', await p.locator('.pmLinha').count()===3 && /total a pagar agora/i.test(await p.innerText('body')));
+  await p.click('.pmFiltro[data-f="falta"]'); await p.waitForTimeout(150);
+  T('filtro "falta pagar" mantém quem deve', await p.locator('.pmLinha').count()===3);
+  await p.click('.pmLinha[data-u="u1"]'); await p.waitForTimeout(150);
+  T('abre detalhe por obra', /Obra o1/.test(await p.innerText('body')) && await p.locator('.pmColab').count()===1);
+  await p.click('.pmMes[data-d="1"]'); await p.waitForTimeout(150);
+  T('mês seguinte (dez) mostra média de dezembro', await p.evaluate(()=>PM_MES==='2026-12'&&pagMesDados('2026-12').length>=2));
+  const [dl]=await Promise.all([p.waitForEvent('download'),p.click('#pmCsv')]);
+  T('exporta CSV', /^equipe-2026-12\.csv$/.test(dl.suggestedFilename()));
+  await p.evaluate(()=>{TAB='dashboard';render();}); await p.evaluate(()=>{TAB='pagmes';render();});
+  T('aba aparece no menu', await p.locator('.tabs button[data-tab="pagmes"]').count()===1);
+  T('sem erros', errs.length===0, errs); console.log(ok+' ok, '+ko+' falhas'); await b.close(); process.exit(ko?1:0);
+})();
