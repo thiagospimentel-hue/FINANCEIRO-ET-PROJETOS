@@ -14,14 +14,19 @@ const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwrig
     DATA.colaboradores[0].pagoMes={'2026-11':3000};
     // Caio: por entrega, 1ª etapa aprovada em out (atrasada) e 2ª aprovada em nov
     const m=DATA.obras[0].equipe[2]; m.etapas[0].aprovado=true; m.etapas[0].concluido=true; m.etapas[0].data='2026-10-10'; m.etapas[1].aprovado=true; m.etapas[1].concluido=true; m.etapas[1].data='2026-11-12';
-    PM_MES='2026-11'; TAB='pagmes'; render(); });
+    PM_MES='2026-11'; PM_TIPO='media'; TAB='pagmes'; render(); });
   const d=await p.evaluate(()=>pagMesDados('2026-11').map(r=>[r.u.nome,r.dev,r.pago,r.ant,r.apagar]));
   T('Ana: média 5.000, pago 3.000, falta 2.000', JSON.stringify(d[0])==='["Ana",5000,3000,0,2000]', d[0]);
   T('Bruno: média 5.000, nada pago', d[1][1]===5000&&d[1][4]===5000, d[1]);
   T('Caio: entrega de nov + atraso de out', d[2][0]==='Caio'&&d[2][3]>0&&d[2][1]>0&&Math.abs(d[2][4]-(d[2][1]-d[2][2]+d[2][3]))<0.01, d[2]);
+  T('padrão: só quem recebe média mensal (2)', await p.locator('.pmLinha').count()===2 && !/Caio/.test(await p.innerText('.pmLinha >> nth=0')));
+  await p.click('.pmTipo[data-t=""]'); await p.waitForTimeout(150);
   T('tela mostra os 3 colaboradores e totais', await p.locator('.pmLinha').count()===3 && /total a pagar agora/i.test(await p.innerText('body')));
   await p.click('.pmFiltro[data-f="falta"]'); await p.waitForTimeout(150);
   T('filtro "falta pagar" mantém quem deve', await p.locator('.pmLinha').count()===3);
+  await p.click('.pmTipo[data-t="entrega"]'); await p.waitForTimeout(150);
+  T('filtro por entrega mostra só o Caio', await p.locator('.pmLinha').count()===1 && /Caio/.test(await p.innerText('.pmLinha')));
+  await p.click('.pmTipo[data-t=""]'); await p.waitForTimeout(150);
   await p.click('.pmLinha[data-u="u1"]'); await p.waitForTimeout(150);
   T('abre detalhe por obra', /Obra o1/.test(await p.innerText('body')) && await p.locator('.pmColab').count()===1);
   await p.click('.pmMes[data-d="1"]'); await p.waitForTimeout(150);
