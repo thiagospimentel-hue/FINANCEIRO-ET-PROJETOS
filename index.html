@@ -918,7 +918,7 @@ function migrarBaixas(d){
         if(e.aprovado===undefined) e.aprovado=!!e.concluido;
         if(m.modelo==='media'&&e.mensal&&!e.retencao&&!e.aprovado&&e.auto===undefined){ e.aprovado=true; e.auto=true; if(!e.data) e.data=e.pagarEm||''; }
         if(!Array.isArray(e.baixas)) e.baixas=[];
-        if(e.concluido && e.aprovado && e.valorFixo===undefined) e.valorFixo=equipeMembroValor(o,m)*((e.pct||0)/100);
+        if(e.concluido && e.aprovado && !e.auto && e.valorFixo===undefined) e.valorFixo=equipeMembroValor(o,m)*((e.pct||0)/100);
       });
       ajustaEtapasPapel(m);
     });
@@ -1625,7 +1625,7 @@ function registrarPagoMes(uid,ym,dataIso,contaId){
   const es=etapasMesMedia(uid,ym); if(!es.length) return false;
   const tot=es.reduce((a,x)=>a+x.v,0); let rest=r2(val); const regs=[];
   es.forEach((x,i)=>{ const parte=i===es.length-1?rest:r2(tot>0?val*x.v/tot:val/es.length); rest=r2(rest-parte); if(!(parte>0)) return;
-    if(!temValor(x.e.valorFixo)) x.e.valorFixo=x.v;
+    if(!temValor(x.e.valorFixo)&&!x.e.auto) x.e.valorFixo=x.v;
     const b=lancarBaixa(x.e,{tipo:'saida',valor:parte,data:dataIso,desc:'Pagamento — '+colabNome(uid)+' — '+x.o.nomeObra+' — '+(x.m.papel||'Equipe')+' / '+x.e.nome,obraId:x.o.id,colaboradorId:uid,origem:{tipo:'equipe',obraId:x.o.id,refId:x.m.id+':'+x.e.nome},contaId:contaId||undefined});
     if(b) regs.push({o:x.o.id,mi:x.mi,ei:x.ei,b:b.id,v:parte}); });
   if(!regs.length) return false;

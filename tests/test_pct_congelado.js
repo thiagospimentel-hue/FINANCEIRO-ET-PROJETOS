@@ -9,7 +9,7 @@ const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwrig
     aplicarModeloPagamento('u1','media',{inicio:'2026-11',meses:2,ret:0,dia:5,fim:'2026-12',grupoId:'g',grupo:'G'},['o1']);
     const c=DATA.colaboradores[0]; c.pagoMes={'2026-11':5000}; registrarPagoMes('u1','2026-11','2026-11-05',''); });
   const antes=await p.evaluate(()=>fichaDe('u1').linhas.map(l=>Math.round(l.val)));
-  T('parcela paga fica congelada em 5.000 antes', antes[0]===5000, antes);
+  T('parcela paga vale 5.000 antes', antes[0]===5000, antes);
   // muda o padrão do colaborador para 12% -> deve aplicar mesmo com pagamento da média e refletir na ficha
   await p.evaluate(()=>{ const u=DATA.colaboradores[0]; u.padrao={'':12}; aplicarPadraoColab('o1','u1',true); });
   const dep=await p.evaluate(()=>({pct:DATA.obras[0].equipe[0].pct,f:fichaDe('u1').linhas.map(l=>Math.round(l.val)),conf:confMensalColab('u1').map(r=>Math.round(r.dev))}));
@@ -20,7 +20,7 @@ const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwrig
   const tr=await p.evaluate(()=>{ const m={etapas:[{aprovado:true,auto:false,baixas:[]}]}; const m2={etapas:[{aprovado:true,auto:true,baixas:[{id:'x'}]}]}; return [membroPctTravado(m),membroPctTravado(m2)]; });
   T('aprovação manual trava; automática não', tr[0]===true&&tr[1]===false, tr);
   // dados antigos (parcelas pagas congeladas) são descongelados ao carregar
-  const mg=await p.evaluate(()=>{ const m=DATA.obras[0].equipe[0]; m.etapas.forEach(e=>{ if(e.mensal) e.valorFixo=5000; }); window.__migCong=false; migrarBaixas(DATA); return {flag:window.__migCong, fixos:m.etapas.filter(e=>temValor(e.valorFixo)).length}; });
+  const mg=await p.evaluate(()=>{ const m=DATA.obras[0].equipe[0]; m.etapas.forEach(e=>{ if(e.mensal) e.valorFixo=5000; }); window.__migCong=false; ensureTiposPadrao(DATA); return {flag:window.__migCong, fixos:m.etapas.filter(e=>temValor(e.valorFixo)).length}; });
   T('migração descongela parcelas automáticas antigas', mg.flag===true&&mg.fixos===0, mg);
   T('sem erros', errs.length===0, errs); console.log(ok+' ok, '+ko+' falhas'); await b.close(); process.exit(ko?1:0);
 })();
