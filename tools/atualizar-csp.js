@@ -18,6 +18,7 @@ const csp = [
   "form-action 'none'",
   "frame-ancestors 'none'",
   "object-src 'none'",
+  "manifest-src 'self'",
 ].join('; ');
 const cfg = { headers: [{ source: '/(.*)', headers: [
   { key: 'Content-Security-Policy', value: csp },

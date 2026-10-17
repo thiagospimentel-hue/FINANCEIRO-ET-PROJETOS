@@ -4,6 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Financeiro • Protótipo</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="theme-color" content="#0f2742">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Financeiro ET">
 <style>
 :root{--bg:#f5f6f8;--panel:#fff;--text:#1a1d23;--muted:#6b7280;--border:#e3e5e9;--accent:#2563eb;--accent-bg:#eaf0fe;--good:#16a34a;--bad:#dc2626;--head:#c9d9f7;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);}
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#14161a;--panel:#1d2026;--text:#eceef1;--muted:#9aa1ac;--border:#2c2f36;--accent:#5b8def;--accent-bg:#1f2a44;--head:#26314d;}}
@@ -122,7 +129,12 @@ td.num{white-space:nowrap;}
 .loginbrand h1{font-size:30px;margin:0 0 10px;letter-spacing:-.02em;} .loginbrand p{color:var(--brand-text);max-width:380px;line-height:1.55;margin:0;}
 .loginform{display:flex;flex-direction:column;justify-content:center;padding:60px;max-width:520px;width:100%;margin:0 auto;}
 .loginform .card{margin-bottom:16px;} .loginform .btn{width:100%;margin-top:8px;}
-@media(max-width:900px){.shell{grid-template-columns:1fr;} .side{position:static;height:auto;} .side .tabs{flex-direction:row;flex-wrap:wrap;} .loginpage{grid-template-columns:1fr;} .loginbrand{padding:30px;}}
+.menuBtn{display:none;}
+@media(max-width:900px){.side{position:sticky!important;top:0;z-index:30;height:auto!important;padding:8px 12px!important;} .sidetop{display:flex;align-items:center;justify-content:space-between;gap:10px;} .side .brand{flex-direction:row;padding:0;} .side .brand img{width:52px;} .side .brand span{display:none;}
+  .menuBtn{display:block;background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:8px;padding:8px 14px;font-size:14px;}
+  .side .tabs,.side .side-foot{display:none;} .side.open .tabs{display:flex;margin-top:8px;} .side.open .side-foot{display:block;margin-top:8px;max-height:45vh;overflow:auto;}
+  .side.open{max-height:100vh;overflow:auto;} .card{overflow-x:auto;} main,.main{min-width:0;} .shell>*{min-width:0;}
+  .shell{grid-template-columns:1fr;} .side .tabs{flex-direction:column;} .loginpage{grid-template-columns:1fr;} .loginbrand{padding:30px;}}
 
 /* ===== Área do colaborador ===== */
 .hero{background:linear-gradient(135deg,var(--brand) 0%,var(--brand-2) 100%);color:#fff;border-radius:14px;padding:22px 24px;margin-bottom:16px;display:flex;gap:18px;align-items:center;flex-wrap:wrap;box-shadow:var(--shadow);}
@@ -152,7 +164,7 @@ td.num{white-space:nowrap;}
 .concl:hover{border-color:var(--accent);} .concl.on{background:#dcfce7;border-color:#86efac;color:#166534;} .concl.lock{cursor:default;opacity:.85;}
 .concl input{width:16px;height:16px;margin:0;}
 .vazio{text-align:center;padding:36px 16px;color:var(--muted);font-size:13.5px;}
-@media(max-width:900px){.kpis{grid-template-columns:1fr 1fr;} .etapa{grid-template-columns:1fr 1fr;}}
+@media(max-width:900px){.kpi{min-width:0;overflow:hidden;} .kpi .v{font-size:clamp(15px,4.6vw,22px);word-break:break-word;} .kpis{grid-template-columns:1fr 1fr;} .etapa{grid-template-columns:1fr 1fr;}}
 </style>
 </head>
 <body>
@@ -908,7 +920,7 @@ function load(){ if(SB.on){ const d0=emptyData(); ensureTiposPadrao(d0); return 
 function save(d){ if(!SB.on){ try{ localStorage.setItem(LS_KEY, JSON.stringify(d)); }catch(e){} } if(SYNC.initialized && d===DATA) syncSchedule(); }
 let DATA=load();
 let SESSION={role:null,userId:null};
-let TAB='dashboard';
+let TAB='dashboard'; let MENU_ABERTO=false;
 let OPEN_OBRA=null, OBRA_BUSCA='';
 let FILTER_COLAB='';
 let OPEN_COLAB=null, SEL_COLAB=null, COLAB_BUSCA='';
@@ -1309,7 +1321,7 @@ function mainView(){
     if(nV) banner+=`<div class="card" style="border-color:var(--bad);background:var(--bad-bg,rgba(220,60,60,.10));padding:10px 14px;"><div class="row-flex" style="justify-content:space-between;flex-wrap:wrap;gap:8px;"><span>⚠️ <b>${nV} cobrança(s) vencida(s)</b> em ${nO} obra(s) — <b class="neg">${fmt(vV)}</b> a receber já passou do vencimento.</span><button class="btn secondary" id="alertaVenc">Ver vencidas</button></div></div>`; }
   const info=admin?(TAB_INFO[TAB]||TAB_INFO.colaboradores):['Meus pagamentos','Etapas, aprovações e valores a receber'];
   const foot=`<div class="side-foot"><div class="user">${esc(nome||'')}</div><span id="syncChip">${SYNC_LABEL[SYNC.state]||''}</span>${adminTools}${SB.on?'<button id="alterarSenha">Alterar senha</button>':''}<button id="logout">Sair</button></div>`;
-  const side=`<aside class="side"><div class="brand"><img src="${LOGO_ET}" alt="ET Engenharia e Projetos"><span>Financeiro · gestão de obras e caixa</span></div>${tabsHtml}${foot}</aside>`;
+  const side=`<aside class="side${MENU_ABERTO?' open':''}"><div class="sidetop"><div class="brand"><img src="${LOGO_ET}" alt="ET Engenharia e Projetos"><span>Financeiro · gestão de obras e caixa</span></div><button class="menuBtn" id="menuBtn">${MENU_ABERTO?'✕ Fechar':'☰ Menu'}</button></div>${tabsHtml}${foot}</aside>`;
   const head=`<div class="pagehead"><div><h1>${info[0]}</h1><div class="sub">${info[1]}</div></div>${admin?'':`<div class="who"><span id="syncChip">${SYNC_LABEL[SYNC.state]||''}</span> ${esc(nome||'')} ${SB.on?'<button id="alterarSenha">Alterar senha</button>':''}<button id="logout">Sair</button></div>`}</div>`;
   return `<div class="shell ${admin?'':'nosidebar'}">${admin?side:''}<div class="main">${head}<div class="wrap">${banner}${empresaFiltroBar()}${body}</div></div></div>`;
 }
@@ -3387,7 +3399,8 @@ function attachMain(){
     const c=prompt('Repita a nova senha:'); if(c!==n){ alert('As senhas não conferem.'); return; }
     try{ await sbSenha(n); alert('Senha alterada com sucesso.'); }catch(err){ alert('Não foi possível alterar: '+err.message); }
   };
-  document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{TAB=b.dataset.tab;PENDING_DEL='';render();});
+  document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{TAB=b.dataset.tab;PENDING_DEL='';MENU_ABERTO=false;render();window.scrollTo(0,0);});
+  const mb=document.getElementById('menuBtn'); if(mb) mb.onclick=()=>{ MENU_ABERTO=!MENU_ABERTO; render(); };
 
   if(SESSION.role==='colab'){
     document.querySelectorAll('.chipSit').forEach(c=>c.onclick=()=>{FILTER_MEUS_SIT=c.dataset.s;render();});
