@@ -346,6 +346,7 @@ async function sbIniciar(){
   SB.carregando=true; render();
   if(eu.role==='admin') SYNC.pend=sbLerPend();
   await sbCarregar(true);
+  if(eu.role==='admin'&&window.__migCong){ window.__migCong=false; try{ save(DATA); }catch(e){} }
   clearInterval(SB.poll); SB.poll=setInterval(()=>{ if(SESSION.role) sbCarregar(false); },20000);
 }
 async function sbBuscarDocs(){
@@ -872,6 +873,7 @@ function ensureTiposPadrao(d){
 // Dados antigos: "pago" vira uma baixa sem lançamento no caixa; entregas já concluídas ficam aprovadas e com valor congelado.
 const SOCIOS_PADRAO=['renner','bruno henrique','jordanna','valentina','guilherme silveira','gabriel ofugi','ocirley'];
 function migrarBaixas(d){
+  (d.obras||[]).forEach(o=>(o.equipe||[]).forEach(m=>{ if(m.modelo!=='media'&&m.modelo!=='unico') return; if((m.etapas||[]).some(e=>e.auto&&temValor(e.valorFixo))){ descongelarAuto(m); window.__migCong=true; } }));
   if(!d.caixa) d.caixa=[];
   if(!d.contas) d.contas=[];
   if(!d.historico) d.historico=[];

@@ -19,5 +19,8 @@ const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwrig
   // vínculo por entrega com aprovação manual continua travado
   const tr=await p.evaluate(()=>{ const m={etapas:[{aprovado:true,auto:false,baixas:[]}]}; const m2={etapas:[{aprovado:true,auto:true,baixas:[{id:'x'}]}]}; return [membroPctTravado(m),membroPctTravado(m2)]; });
   T('aprovação manual trava; automática não', tr[0]===true&&tr[1]===false, tr);
+  // dados antigos (parcelas pagas congeladas) são descongelados ao carregar
+  const mg=await p.evaluate(()=>{ const m=DATA.obras[0].equipe[0]; m.etapas.forEach(e=>{ if(e.mensal) e.valorFixo=5000; }); window.__migCong=false; migrarBaixas(DATA); return {flag:window.__migCong, fixos:m.etapas.filter(e=>temValor(e.valorFixo)).length}; });
+  T('migração descongela parcelas automáticas antigas', mg.flag===true&&mg.fixos===0, mg);
   T('sem erros', errs.length===0, errs); console.log(ok+' ok, '+ko+' falhas'); await b.close(); process.exit(ko?1:0);
 })();
