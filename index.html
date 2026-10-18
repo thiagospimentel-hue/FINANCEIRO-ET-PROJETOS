@@ -3013,7 +3013,14 @@ function fichaDe(uid){
   // Ficha do colaborador: lista fechada de campos (o banco só devolve estes campos ao colaborador).
   const c=(DATA.colaboradores||[]).find(x=>x.id===uid)||{};
   const pg=pagamentosDoColaborador(uid,true);
-  return {colaborador:{id:uid,nome:c.nome||'',cargo:c.cargo||''},linhas:pg.linhas.map(l=>({obraId:l.obraId,obra:l.obra,tipo:l.tipo,equipeIdx:l.equipeIdx,etapaIdx:l.etapaIdx,despId:l.despId||null,papel:l.papel,p:l.p,val:l.val,pago:l.pago,saldo:l.saldo,sit:l.sit,concluido:l.concluido,aprovado:l.aprovado,pagarEm:l.pagarEm,data:l.data,mesAno:l.mesAno,baixas:(l.baixas||[]).map(b=>({id:b.id,data:b.data,valor:b.valor}))})),conferencia:confMensalColab(uid).map(r=>({ym:r.ym,dev:r2(r.dev),pago:r2(r.pago),dif:r2(r.dif),acum:r2(r.acum),pagoEm:(((c.pagoRegistro||{})[r.ym])||{}).data||''}))};
+  // Meses com valor pago digitado na conferência: o recebido das parcelas do mês segue esse valor (rateado pelo devido),
+  // para a tela do colaborador bater com a conferência (cartões, por obra e lista de pagamentos)
+  const confR={}; confMensalColab(uid).forEach(r=>{ if(r.man!==null&&r.dev>0.004) confR[r.ym]=r; });
+  const dadosAj=pg.linhas.map(l=>{ if(l.tipo!=='equipe_etapa') return null; const o=DATA.obras.find(x=>x.id===l.obraId); const m=o&&(o.equipe||[])[l.equipeIdx]; const e=m&&(m.etapas||[])[l.etapaIdx];
+    if(!e||!e.pagarEm||!(((e.mensal&&(m.modelo==='media'||m.modelo==='unico'))||e.unico))||e.retencao) return null; const r=confR[e.pagarEm.slice(0,7)]; return r?{r,v:valorEquipeEtapa(o,m,e)}:null; });
+  const linhasAj=pg.linhas.map((l,i)=>{ const d=dadosAj[i]; if(!d) return l; const pago=r2(d.r.pago*d.v/d.r.dev); const sit=pago>=l.val-0.005&&l.val>0?'pago':(pago>0.005?'parcial':'aprovado');
+    return {...l,pago,saldo:l.aprovado?Math.max(0,r2(l.val-pago)):0,sit:l.aprovado?sit:l.sit,baixas:pago>0.004?[{id:'conf'+d.r.ym,data:((c.pagoRegistro||{})[d.r.ym]||{}).data||'',valor:pago}]:[]}; });
+  return {colaborador:{id:uid,nome:c.nome||'',cargo:c.cargo||''},linhas:linhasAj.map(l=>({obraId:l.obraId,obra:l.obra,tipo:l.tipo,equipeIdx:l.equipeIdx,etapaIdx:l.etapaIdx,despId:l.despId||null,papel:l.papel,p:l.p,val:l.val,pago:l.pago,saldo:l.saldo,sit:l.sit,concluido:l.concluido,aprovado:l.aprovado,pagarEm:l.pagarEm,data:l.data,mesAno:l.mesAno,baixas:(l.baixas||[]).map(b=>({id:b.id,data:b.data,valor:b.valor}))})),conferencia:confMensalColab(uid).map(r=>({ym:r.ym,dev:r2(r.dev),pago:r2(r.pago),dif:r2(r.dif),acum:r2(r.acum),pagoEm:(((c.pagoRegistro||{})[r.ym])||{}).data||''}))};
 }
 function pagamentosDoColaborador(uid,todasAsObras){
   if(SB.on && SESSION.role==='colab'){
