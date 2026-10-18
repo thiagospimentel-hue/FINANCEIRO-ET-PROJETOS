@@ -2782,6 +2782,25 @@ function pagMesView(){
     <tr class="hdr"><td>Total (${rows.length})</td><td></td><td class="num">${fmt(rows.reduce((a,r)=>a+r.dev,0))}</td><td class="num">${fmt(rows.reduce((a,r)=>a+r.pago,0))}</td><td class="num">${fmt(rows.reduce((a,r)=>a+r.ant,0))}</td><td class="num">${fmt(rows.reduce((a,r)=>a+r.apagar,0))}</td><td></td></tr></table></div>
     <p class="small" style="margin-top:6px;">Devido = parcelas de média, pagamentos únicos, entregas aprovadas e despesas de obra vinculadas. “Meses anteriores” = diferença acumulada ainda não acertada (positivo = falta pagar; negativo = pago a mais). Clique no colaborador para ver as obras.</p></div>`;
 }
+
+// Equipe em média mensal (valor fixo): uma linha por colaborador, com o total do mês + o que ficou em aberto de meses anteriores
+function equipeMediaCard(ym,rows){
+  if(!rows.length) return '';
+  const rotM=m=>m.slice(5)+'/'+m.slice(0,4); const mesAnt=mesDeslocar(ym,-1);
+  const tot=rows.reduce((a,r)=>({dev:a.dev+r.dev,ant:a.ant+r.ant,pago:a.pago+r.pago,ap:a.ap+r.apagar}),{dev:0,ant:0,pago:0,ap:0});
+  const lin=rows.map(r=>{ const u=r.u; const reg=(u.pagoRegistro||{})[ym];
+    const nOb=[...new Set(r.itens.map(x=>x.obra))]; const det=r.itens.map(x=>esc(x.obra)+': <b>'+fmt(x.v)+'</b>').join(' · ');
+    const sit=reg?`<span class="pos">✔ pago em ${isoToBr(reg.data)}</span>`:r.apagar>0.005?'<span class="badge badge-andamento">A pagar</span>':r.apagar<-0.005?'<span class="pos">pago a mais</span>':'<span class="pos">✔ quitado</span>';
+    const acao=reg?`<div class="small">Registrado: <b>${fmt(reg.valor)}</b></div><button class="btn secondary mmDesf" data-u="${esc(u.id)}" data-m="${esc(ym)}" style="padding:0 6px;">desfazer</button>${r.apagar>0.005?`<div class="small neg">ainda falta ${fmt(r.apagar)}</div>`:''}`:
+      `<div class="row-flex bxbox" style="gap:4px;flex-wrap:wrap;"><input type="text" inputmode="decimal" class="mmVal" value="${(r.apagar>0?r.apagar:0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}" style="width:104px;text-align:right;" title="Valor pago"><input type="text" inputmode="numeric" class="mmData dateBr" value="${isoToBr(hojeISO())}" maxlength="10" style="width:92px;" title="Data do pagamento"><button class="btn mmReg" data-u="${esc(u.id)}" data-m="${esc(ym)}">Pagar</button></div>`;
+    return `<tr><td><b>${esc(u.nome||'')}</b><details><summary class="small" style="cursor:pointer;">ver ${nOb.length} obra(s)</summary><div class="small">${det}</div></details></td>
+      <td class="num">${fmt(r.dev)}</td><td class="num ${r.ant>0.005?'neg':r.ant<-0.005?'pos':''}">${r.ant>0.005?fmt(r.ant):r.ant<-0.005?'crédito '+fmt(-r.ant):'—'}</td>
+      <td class="num"><b class="${r.apagar>0.005?'neg':''}">${fmt(Math.max(0,r.apagar))}</b></td><td>${sit}</td><td style="min-width:290px;">${acao}</td></tr>`; }).join('');
+  return `<div style="margin-top:6px;"><h3 style="margin:8px 0 2px;">Equipe — média mensal (valor fixo) — ${esc(mesNomeCompleto(ym))}</h3>
+    <p class="small" style="margin:0 0 6px;">Uma linha por colaborador. “Total a pagar” = devido em ${esc(rotM(ym))} + o que ficou em aberto até ${esc(rotM(mesAnt))}. Ao pagar, informe o valor: se for diferente, a diferença segue para a conferência do colaborador.</p>
+    <div style="overflow-x:auto;"><table><tr><th>Colaborador</th><th class="num">Devido em ${esc(rotM(ym))}</th><th class="num">Em aberto até ${esc(rotM(mesAnt))}</th><th class="num">Total a pagar</th><th>Situação</th><th>Registrar pagamento</th></tr>${lin}
+    <tr class="hdr"><td>Total (${rows.length})</td><td class="num">${fmt(tot.dev)}</td><td class="num">${fmt(tot.ant)}</td><td class="num">${fmt(Math.max(0,tot.ap))}</td><td></td><td></td></tr></table></div></div>`;
+}
 function contasView(){
   const eq=equipeAPagarTotal();
   const hoje=hojeISO(), mesHoje=hoje.slice(0,7);
@@ -2809,18 +2828,6 @@ function contasView(){
     itens.push({kind:'equipe',o:o.id,mi,ei,id:o.id+'|'+mi+'|'+ei,venc,semData:!venc,desc:'Equipe — '+colabNome(m.colaboradorId)+' — '+(m.papel||'Equipe')+' / '+e.nome,cat:'Equipe',local:o.nomeObra,valor:val,pago,
       sit:paga?'paga':(venc&&venc<hoje?'vencida':(pago>0.005?'parcial':'aberta')),baixas:e.baixas||[],ref:['equipe',o.id,mi,ei]});
   })));
-  // Média mensal / pagamento único: UMA linha por colaborador e mês (soma das obras); o detalhe fica dentro da linha
-  (DATA.colaboradores||[]).forEach(u=>{
-    const porMes={}; DATA.obras.forEach(o=>{ if(!obraVisivel(o)) return; (o.equipe||[]).forEach((m,mi)=>{ if(m.colaboradorId!==u.id||m.inativo) return;
-      (m.etapas||[]).forEach(e=>{ if(!e.pct||!e.aprovado||!etapaAutoPagto(m,e)||!e.pagarEm) return; const ym=e.pagarEm.slice(0,7); const g=porMes[ym]=porMes[ym]||{v:0,sis:0,venc:e.pagarEm,obras:{},unico:0};
-        const v=valorEquipeEtapa(o,m,e); g.v+=v; g.sis+=baixaTotal(e); if(e.pagarEm<g.venc) g.venc=e.pagarEm; g.obras[o.nomeObra]=(g.obras[o.nomeObra]||0)+v; if(e.unico) g.unico+=v; }); }); });
-    Object.keys(porMes).forEach(ym=>{ const g=porMes[ym]; if(!(g.v>0.004)) return; const reg=(u.pagoRegistro||{})[ym]; const man=(u.pagoMes||{})[ym];
-      const pago=reg?+reg.valor:(man!==undefined&&man!==''&&+man>0?+man:g.sis); const paga=pago>=g.v-0.005;
-      const nOb=Object.keys(g.obras).length; const det=Object.keys(g.obras).map(k=>esc(k)+': <b>'+fmt(g.obras[k])+'</b>').join(' · ');
-      itens.push({kind:'mediames',u:u.id,ym,id:u.id+'|'+ym,venc:g.venc,desc:'Equipe — '+(u.nome||'')+' — '+(g.unico>0.004?'Média mensal + pagamento único ':'Média mensal ')+ym.slice(5)+'/'+ym.slice(0,4),
-        descHtml:'<b>Equipe — '+esc(u.nome||'')+'</b> — '+(g.unico>0.004?'Média mensal + pagamento único ':'Média mensal ')+esc(ym.slice(5)+'/'+ym.slice(0,4))+`<details style="margin-top:2px;"><summary class="small" style="cursor:pointer;">ver as ${nOb} obra(s)</summary><div class="small">${det}</div></details>`,
-        cat:'Equipe',local:nOb+' obra(s)',valor:r2(g.v),pago:r2(pago),reg:reg||null,man:man,
-        sit:paga?'paga':(g.venc<hoje?'vencida':(pago>0.005?'parcial':'aberta')),baixas:[],ref:['mediames',u.id,ym,'']}); }); });
   const saldoDe=i=>Math.max(0,i.valor-i.pago);
   const noMes=i=>{
     if(!mes) return true;
@@ -2830,23 +2837,23 @@ function contasView(){
   const atrasada=i=>!!mes && !!i.venc && i.venc.slice(0,7)<mes && (i.sit!=='paga' || i.baixas.some(b=>(b.data||'').slice(0,7)===mes));
   const doMes=itens.filter(noMes), atrasadas=itens.filter(i=>!noMes(i)&&atrasada(i));
   const lista=doMes.concat(atrasadas).sort((a,b)=>(a.venc||'9999')<(b.venc||'9999')?-1:1);
-  const totMes=doMes.reduce((s,i)=>s+i.valor,0);
-  const pagoMes=doMes.reduce((s,i)=>s+Math.min(i.pago,i.valor),0);
-  const abertoMes=doMes.reduce((s,i)=>s+saldoDe(i),0);
+  const ymE=mes||mesHoje; const eqM=pagMesDados(ymE).filter(r=>r.tipo==='media');
+  const totMes=doMes.reduce((s,i)=>s+i.valor,0)+eqM.reduce((s,r)=>s+r.dev,0);
+  const pagoMes=doMes.reduce((s,i)=>s+Math.min(i.pago,i.valor),0)+eqM.reduce((s,r)=>s+Math.min(r.pago,r.dev),0);
+  const abertoMes=doMes.reduce((s,i)=>s+saldoDe(i),0)+eqM.reduce((s,r)=>s+Math.max(0,r.dev-r.pago),0);
   const vencidoTotal=itens.filter(i=>i.sit==='vencida').reduce((s,i)=>s+saldoDe(i),0);
-  const atrasT=atrasadas.reduce((s,i)=>s+saldoDe(i),0);
+  const atrasT=atrasadas.reduce((s,i)=>s+saldoDe(i),0)+eqM.reduce((s,r)=>s+Math.max(0,r.ant),0);
   const rows=lista.map(i=>{
     const sit=i.sit, saldo=saldoDe(i), atras=atrasadas.includes(i);
     const badge= sit==='paga'?'<span class="badge badge-faturada">Paga</span>' : sit==='vencida'?'<span class="badge" style="background:var(--bad);color:#fff;">Vencida</span>' : sit==='parcial'?'<span class="badge badge-concluida">Parcial</span>' : '<span class="badge badge-andamento">A vencer</span>';
     const ultData=i.baixas.map(b=>b.data).filter(Boolean).sort().pop();
     const attrs=i.kind==='conta'?`data-id="${esc(i.id)}"`:i.kind==='despobra'?`data-o="${esc(i.o)}" data-d="${esc(i.d)}"`:i.kind==='fixa'?`data-f="${esc(i.f)}" data-m="${esc(i.ym)}"`:`data-o="${esc(i.o)}" data-mi="${i.mi}" data-ei="${i.ei}"`;
     const w=(sd)=>baixaWidget(i.ref[0],i.ref[1],i.ref[2],i.ref[3],sd,i.baixas,'Pagar');
-    const wMM=()=>i.reg?`<div class="small">✔ registrado em ${isoToBr(i.reg.data)} · ${fmt(i.reg.valor)}</div><button class="btn secondary mmDesf" data-u="${esc(i.u)}" data-m="${esc(i.ym)}" style="padding:0 6px;">desfazer</button>${saldo>0.005?'<div class="small">A diferença segue para o próximo mês na conferência do colaborador.</div>':''}`:`<details><summary class="small" style="cursor:pointer;">pagar parcial / outra data</summary><div class="row-flex bxbox" style="gap:4px;flex-wrap:nowrap;margin-top:4px;"><input type="text" inputmode="decimal" class="mmVal" value="${(i.man>0?+i.man:saldo).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}" style="width:92px;" title="Valor"><input type="text" inputmode="numeric" class="mmData dateBr" value="${isoToBr(hojeISO())}" maxlength="10" style="width:92px;"><button class="btn secondary mmReg" data-u="${esc(i.u)}" data-m="${esc(i.ym)}">Pagar</button></div></details>`;
     return `<tr ${sit==='paga'?'style="opacity:.7;"':''}>
-      <td style="text-align:center;"><input type="checkbox" class="${i.kind==='conta'?'contaPago':i.kind==='despobra'?'dobPago':i.kind==='fixa'?'fixaPago':i.kind==='mediames'?'mmPago':'eqPago'}" ${i.kind==='mediames'?`data-u="${esc(i.u)}" data-m="${esc(i.ym)}"`:attrs} ${i.kind==='mediames'&&!i.reg?'':''} ${sit==='paga'?'checked':''} title="${sit==='paga'?'Desmarcar desfaz os pagamentos e os lançamentos no caixa':'Marcar como pago hoje (valor integral)'}" style="width:18px;height:18px;"></td>
-      <td>${i.venc?isoToBr(i.venc):'<span class="small">sem data</span>'}${atras?' <span class="small">(atrasada)</span>':''}</td><td>${i.descHtml||esc(i.desc)}</td><td class="small">${esc(i.cat)}</td><td class="small">${esc(i.local)}</td>
+      <td style="text-align:center;"><input type="checkbox" class="${i.kind==='conta'?'contaPago':i.kind==='despobra'?'dobPago':i.kind==='fixa'?'fixaPago':'eqPago'}" ${attrs} ${sit==='paga'?'checked':''} title="${sit==='paga'?'Desmarcar desfaz os pagamentos e os lançamentos no caixa':'Marcar como pago hoje (valor integral)'}" style="width:18px;height:18px;"></td>
+      <td>${i.venc?isoToBr(i.venc):'<span class="small">sem data</span>'}${atras?' <span class="small">(atrasada)</span>':''}</td><td>${esc(i.desc)}</td><td class="small">${esc(i.cat)}</td><td class="small">${esc(i.local)}</td>
       <td class="num">${fmt(i.valor)}</td><td class="num">${i.pago>0?fmt(i.pago)+(sit==='paga'&&ultData?'<div class="small">em '+isoToBr(ultData)+'</div>':''):'—'}</td><td style="text-align:center;">${badge}</td>
-      <td style="min-width:200px;">${i.kind==='mediames'?wMM():sit==='paga'?w(0):`<details ${i.pago>0?'open':''}><summary class="small" style="cursor:pointer;">pagar parcial / outra data</summary>${w(saldo)}</details>`}</td>
+      <td style="min-width:200px;">${sit==='paga'?w(0):`<details ${i.pago>0?'open':''}><summary class="small" style="cursor:pointer;">pagar parcial / outra data</summary>${w(saldo)}</details>`}</td>
       <td>${i.kind==='conta'?`<button class="btn danger delconta" data-id="${esc(i.id)}" ${i.baixas.length?'disabled title="Desmarque o pagamento antes de excluir"':''}>x</button>`:''}</td>
     </tr>`;
   }).join('') || `<tr><td colspan="10" class="small">Nenhuma conta ${mes?'com vencimento neste mês':'cadastrada'}. Cadastre em “Nova conta a pagar” abaixo${mes?' ou clique em “Todos” para ver os outros meses':''}.</td></tr>`;
@@ -2865,6 +2872,8 @@ function contasView(){
         <div><span class="small">Já pago</span><br><b class="pos">${fmt(pagoMes)}</b></div>
         <div><span class="small">Falta pagar${atrasT>0.005?' (+ '+fmt(atrasT)+' de meses anteriores)':''}</span><br><b class="${abertoMes+atrasT>0.005?'neg':''}">${fmt(abertoMes)}</b></div>
       </div>
+      ${equipeMediaCard(ymE,eqM)}
+      <h3 style="margin:16px 0 4px;">Contas, despesas e entregas — ${mes?esc(mesNomeCompleto(mes)):'todos os meses'}</h3>
       <div style="overflow-x:auto;"><table><tr><th style="text-align:center;">Pago</th><th>Vencimento</th><th>Descrição</th><th>Categoria</th><th>Obra / empresa</th><th class="num">Valor</th><th class="num">Pago</th><th style="text-align:center;">Situação</th><th></th><th></th></tr>${rows}</table></div>
       <p class="small" style="margin-top:8px;">Marcar “Pago” lança a saída no caixa com a data de hoje. Contas vencidas e não pagas de meses anteriores aparecem na lista como “atrasada”. Vencido total em aberto: <b class="${vencidoTotal>0?'neg':''}">${fmt(vencidoTotal)}</b>.</p>
     </div>
@@ -3882,14 +3891,6 @@ function attachMain(){
         logAcao('Pagamento desfeito: '+d.nome+' — '+o.nomeObra);
       }
       save(DATA); render();
-    });
-    document.querySelectorAll('.mmPago').forEach(cb=>cb.onchange=e=>{
-      const u=DATA.colaboradores.find(x=>x.id===cb.dataset.u); const ym=cb.dataset.m; if(!u) return;
-      if(e.target.checked){
-        const dev=etapasMesMedia(u.id,ym).reduce((a,x)=>a+x.v,0); u.pagoMes=u.pagoMes||{}; const man=+u.pagoMes[ym]; if(!(man>0)) u.pagoMes[ym]=r2(dev);
-        if(registrarPagoMes(u.id,ym,hojeISO(),'')) save(DATA);
-      } else { if(desfazerPagoMes(u.id,ym)) save(DATA); }
-      setTimeout(render,0);
     });
     document.querySelectorAll('.mmReg').forEach(b=>b.onclick=()=>{
       const bx=b.closest('.bxbox'); const v=parseBRL(bx.querySelector('.mmVal').value), iso=brToIso(bx.querySelector('.mmData').value); if(!(v>0)||!iso){ bx.style.outline='1px solid var(--bad)'; return; }
