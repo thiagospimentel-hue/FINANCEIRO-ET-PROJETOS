@@ -25,10 +25,10 @@ const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwrig
     // dados reais: parcelas aprovadas à mão (sem auto) e congeladas também são liberadas
   const mg2=await p.evaluate(()=>{ const m=DATA.obras[0].equipe[0]; m.etapas.forEach(e=>{ if(e.mensal){ delete e.auto; e.aprovado=true; e.valorFixo=4000; } }); window.__migCong=false; ensureTiposPadrao(DATA); return {flag:window.__migCong, fixos:m.etapas.filter(e=>temValor(e.valorFixo)).length, trav:membroPctTravado(m)}; });
   T('parcelas de média aprovadas à mão também descongelam', mg2.flag===true&&mg2.fixos===0&&mg2.trav===false, mg2);
-  // pagamento registrado + baixa complementar (pagou a diferença): conferência fica zerada
+  // valor manual digitado manda: a diferença continua como saldo devedor
   const zz=await p.evaluate(()=>{ const c=DATA.colaboradores[0]; const o=DATA.obras[0], m=o.equipe[0]; const e=m.etapas.find(x=>x.mensal&&baixaTotal(x)>0);
     const dif=valorEquipeEtapa(o,m,e)-baixaTotal(e); lancarBaixa(e,{tipo:'saida',valor:dif,data:'2026-11-06',desc:'diferença',obraId:o.id,colaboradorId:c.id,origem:{tipo:'equipe',obraId:o.id,refId:m.id+':'+e.nome}});
     const r=confMensalColab('u1').find(x=>x.ym==='2026-11'); return {dev:r.dev,pago:r.pago,dif:Math.round(r.dif*100)/100}; });
-  T('diferença paga por baixa complementar zera a conferência do mês', zz.dif===0&&zz.pago===zz.dev, zz);
+  T('valor manual manda: diferença segue como saldo devedor', zz.pago===5000&&Math.round(zz.dif)===1000, zz);
   T('sem erros', errs.length===0, errs); console.log(ok+' ok, '+ko+' falhas'); await b.close(); process.exit(ko?1:0);
 })();
