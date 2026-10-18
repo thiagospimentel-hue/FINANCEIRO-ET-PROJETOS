@@ -2785,6 +2785,7 @@ function pagMesView(){
 }
 
 // Equipe em média mensal (valor fixo): uma linha por colaborador, com o total do mês + o que ficou em aberto de meses anteriores
+let MM_DIGITADO={}; // valor digitado em "Pagar" (não perde se a tela atualizar)
 function equipeMediaCard(ym,rows){
   if(!rows.length) return '';
   const rotM=m=>m.slice(5)+'/'+m.slice(0,4); const mesAnt=mesDeslocar(ym,-1);
@@ -2793,7 +2794,7 @@ function equipeMediaCard(ym,rows){
     const nOb=[...new Set(r.itens.map(x=>x.obra))]; const det=r.itens.map(x=>esc(x.obra)+': <b>'+fmt(x.v)+'</b>').join(' · ');
     const sit=reg?`<span class="pos">✔ pago em ${isoToBr(reg.data)}</span>`:r.apagar>0.005?'<span class="badge badge-andamento">A pagar</span>':r.apagar<-0.005?'<span class="pos">pago a mais</span>':'<span class="pos">✔ quitado</span>';
     const acao=reg?`<div class="small">Registrado: <b>${fmt(reg.valor)}</b></div><button class="btn secondary mmDesf" data-u="${esc(u.id)}" data-m="${esc(ym)}" style="padding:0 6px;">desfazer</button>${r.apagar>0.005?`<div class="small neg">ainda falta ${fmt(r.apagar)}</div>`:''}`:
-      `<div class="row-flex bxbox" style="gap:4px;flex-wrap:wrap;"><input type="text" inputmode="decimal" class="mmVal" value="${(r.apagar>0?r.apagar:0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}" style="width:104px;text-align:right;" title="Valor pago"><input type="text" inputmode="numeric" class="mmData dateBr" value="${isoToBr(hojeISO())}" maxlength="10" style="width:92px;" title="Data do pagamento"><button class="btn mmReg" data-u="${esc(u.id)}" data-m="${esc(ym)}">Pagar</button></div>`;
+      `<div class="row-flex bxbox" style="gap:4px;flex-wrap:wrap;"><input type="text" inputmode="decimal" class="mmVal" data-u="${esc(u.id)}" data-m="${esc(ym)}" value="${MM_DIGITADO[u.id+'|'+ym]!==undefined?esc(MM_DIGITADO[u.id+'|'+ym]):(r.apagar>0?r.apagar:0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}" style="width:104px;text-align:right;" title="Valor pago"><input type="text" inputmode="numeric" class="mmData dateBr" value="${isoToBr(hojeISO())}" maxlength="10" style="width:92px;" title="Data do pagamento"><button class="btn mmReg" data-u="${esc(u.id)}" data-m="${esc(ym)}">Pagar</button></div>`;
     return `<tr><td><b>${esc(u.nome||'')}</b><details><summary class="small" style="cursor:pointer;">ver ${nOb.length} obra(s)</summary><div class="small">${det}</div></details></td>
       <td class="num">${fmt(r.dev)}</td><td class="num ${r.ant>0.005?'neg':r.ant<-0.005?'pos':''}">${r.ant>0.005?fmt(r.ant):r.ant<-0.005?'crédito '+fmt(-r.ant):'—'}</td>
       <td class="num"><b class="${r.apagar>0.005?'neg':''}">${fmt(Math.max(0,r.apagar))}</b></td><td>${sit}</td><td style="min-width:290px;">${acao}</td></tr>`; }).join('');
@@ -3893,12 +3894,13 @@ function attachMain(){
       }
       save(DATA); render();
     });
+    document.querySelectorAll('.mmVal').forEach(i=>i.oninput=()=>{ MM_DIGITADO[i.dataset.u+'|'+i.dataset.m]=i.value; });
     document.querySelectorAll('.mmReg').forEach(b=>b.onclick=()=>{
       const bx=b.closest('.bxbox'); const v=parseBRL(bx.querySelector('.mmVal').value), iso=brToIso(bx.querySelector('.mmData').value); if(!(v>0)||!iso){ bx.style.outline='1px solid var(--bad)'; return; }
       const u=DATA.colaboradores.find(x=>x.id===b.dataset.u); if(!u) return; u.pagoMes=u.pagoMes||{}; u.pagoMes[b.dataset.m]=v;
-      if(registrarPagoMes(u.id,b.dataset.m,iso,'')) save(DATA); setTimeout(render,0);
+      if(registrarPagoMes(u.id,b.dataset.m,iso,'')){ delete MM_DIGITADO[u.id+'|'+b.dataset.m]; save(DATA); } else if(u.pagoMes&&!(u.pagoRegistro&&u.pagoRegistro[b.dataset.m])){ delete u.pagoMes[b.dataset.m]; if(!Object.keys(u.pagoMes).length) delete u.pagoMes; } setTimeout(render,0);
     });
-    document.querySelectorAll('.mmDesf').forEach(b=>b.onclick=()=>{ if(desfazerPagoMes(b.dataset.u,b.dataset.m)) save(DATA); setTimeout(render,0); });
+    document.querySelectorAll('.mmDesf').forEach(b=>b.onclick=()=>{ const cu=DATA.colaboradores.find(x=>x.id===b.dataset.u); const vr=cu&&cu.pagoRegistro&&cu.pagoRegistro[b.dataset.m]&&cu.pagoRegistro[b.dataset.m].valor; if(desfazerPagoMes(b.dataset.u,b.dataset.m)){ if(cu&&cu.pagoMes&&cu.pagoMes[b.dataset.m]===vr){ delete cu.pagoMes[b.dataset.m]; if(!Object.keys(cu.pagoMes).length) delete cu.pagoMes; } save(DATA); } setTimeout(render,0); });
     document.querySelectorAll('.eqPago').forEach(cb=>cb.onchange=e=>{
       const obra=DATA.obras.find(o=>o.id===cb.dataset.o); const m=obra&&(obra.equipe||[])[cb.dataset.mi]; const it=m&&m.etapas[cb.dataset.ei]; if(!it) return;
       if(e.target.checked){
