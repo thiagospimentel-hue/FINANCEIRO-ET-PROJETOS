@@ -88,7 +88,7 @@ Deno.serve(async (req) => {
   if (origem && !origemOk(origem)) return json({ erro: "Origem não autorizada" }, 403);
   try {
     const chave = Deno.env.get("ANTHROPIC_API_KEY");
-    if (!chave) return json({ erro: "A leitura automática ainda não foi ativada (falta a chave ANTHROPIC_API_KEY no Supabase)." }, 503);
+    if (!chave) return json({ erro: "A leitura automática ainda não foi ativada (falta a chave ANTHROPIC_API_KEY no Supabase)." }, 501);
     const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
     const token = (req.headers.get("Authorization") || "").replace(/^Bearer /i, "");
     const { data: u } = await admin.auth.getUser(token);
