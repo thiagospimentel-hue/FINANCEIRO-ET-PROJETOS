@@ -648,7 +648,7 @@ function ciRevisao(caixa,c,ctx){
       <div class="field"><label>Empresa contratada (minha empresa)</label><select id="ci_emp">${empresaOptions(empId)}</select></div>
       <div class="field"><label>Tipo de serviço</label><select id="ci_tipo">${DATA.tiposServico.map(t=>`<option value="${esc(t.id)}" ${t.id===ciTipoSugerido(c.objeto)?'selected':''}>${esc(t.nome)}</option>`).join('')}</select></div>
       ${campo('ci_val','Valor total do contrato (R$)',total,'number')}
-      ${campo('ci_imp','Imposto (%)',17,'number')}
+      ${campo('ci_imp','Imposto (%)',18.5,'number')}
       ${campo('ci_ini','Data de início',c.dataInicio,'date')}
       ${campo('ci_fim','Previsão de término',c.dataTermino,'date')}
     </div>
@@ -3591,7 +3591,7 @@ function attachMain(){
     if(addobra) addobra.onclick=()=>{
       const id='o'+Date.now();
       const codigo='OBRA-'+String(DATA.obras.length+1).padStart(3,'0');
-      DATA.obras.push({id,nomeObra:'Nova obra',codigo,status:'andamento',dataInicio:'',dataPrevisao:'',empresaId:'',cliente:{nome:'',documento:'',telefone:'',email:'',endereco:'',construtora:'',spe:''},condicoes:'',etapasPagamento:etapasPadrao(),despesasObra:[{id:novoId('do'),nome:'ART',fornecedor:'CREA',colaboradorId:'',pct:0,modo:'pct'},{id:novoId('do'),nome:'Lista de materiais',fornecedor:'',colaboradorId:'',pct:0,modo:'pct'}],equipe:[],servicos:[{id:'s'+Date.now(),tipoId:DATA.tiposServico[0]?.id||'',valorTotal:0,imposto:17,despesas:[],aditivos:[]}],reajustes:[]});
+      DATA.obras.push({id,nomeObra:'Nova obra',codigo,status:'andamento',dataInicio:'',dataPrevisao:'',empresaId:'',cliente:{nome:'',documento:'',telefone:'',email:'',endereco:'',construtora:'',spe:''},condicoes:'',etapasPagamento:etapasPadrao(),despesasObra:[{id:novoId('do'),nome:'ART',fornecedor:'CREA',colaboradorId:'',pct:0,modo:'pct'},{id:novoId('do'),nome:'Lista de materiais',fornecedor:'',colaboradorId:'',pct:0,modo:'pct'}],equipe:[],servicos:[{id:'s'+Date.now(),tipoId:DATA.tiposServico[0]?.id||'',valorTotal:0,imposto:18.5,despesas:[],aditivos:[]}],reajustes:[]});
       OPEN_OBRA=id; save(DATA); render();
     };
     document.querySelectorAll('.obraCampo').forEach(i=>i.onchange=e=>{const obra=DATA.obras.find(o=>o.id===i.dataset.o);obra[i.dataset.f]=e.target.value; if(i.dataset.f==='status') sincRetencoes(obra); save(DATA);render();});
@@ -3665,7 +3665,7 @@ function attachMain(){
     document.querySelectorAll('.equipepct').forEach(i=>i.onchange=e=>{const obra=DATA.obras.find(o=>o.id===i.dataset.o);const mq=obra.equipe[i.dataset.i], nv=parseFloat(e.target.value)||0; if(mq.pct!==nv) descongelarAuto(mq); mq.pct=nv;save(DATA);render();});
     document.querySelectorAll('.addserv').forEach(b=>b.onclick=()=>{
       const obra=DATA.obras.find(o=>o.id===b.dataset.o);
-      obra.servicos.push({id:'s'+Date.now(),tipoId:DATA.tiposServico[0]?.id||'',valorTotal:0,imposto:17,despesas:[],aditivos:[]});
+      obra.servicos.push({id:'s'+Date.now(),tipoId:DATA.tiposServico[0]?.id||'',valorTotal:0,imposto:18.5,despesas:[],aditivos:[]});
       save(DATA); render();
     });
     document.querySelectorAll('.delserv').forEach(b=>b.onclick=()=>{DATA.obras.forEach(o=>o.servicos=o.servicos.filter(s=>s.id!==b.dataset.s));save(DATA);render();});
