@@ -3594,7 +3594,9 @@ function attachMain(){
       DATA.obras.push({id,nomeObra:'Nova obra',codigo,status:'andamento',dataInicio:'',dataPrevisao:'',empresaId:'',cliente:{nome:'',documento:'',telefone:'',email:'',endereco:'',construtora:'',spe:''},condicoes:'',etapasPagamento:etapasPadrao(),despesasObra:[{id:novoId('do'),nome:'ART',fornecedor:'CREA',colaboradorId:'',pct:0,modo:'pct'},{id:novoId('do'),nome:'Lista de materiais',fornecedor:'',colaboradorId:'',pct:0,modo:'pct'}],equipe:[],servicos:[{id:'s'+Date.now(),tipoId:DATA.tiposServico[0]?.id||'',valorTotal:0,imposto:18.5,despesas:[],aditivos:[]}],reajustes:[]});
       OPEN_OBRA=id; save(DATA); render();
     };
-    document.querySelectorAll('.obraCampo').forEach(i=>i.onchange=e=>{const obra=DATA.obras.find(o=>o.id===i.dataset.o);obra[i.dataset.f]=e.target.value; if(i.dataset.f==='status') sincRetencoes(obra); save(DATA);render();});
+    document.querySelectorAll('.obraCampo').forEach(i=>{ const grava=()=>{const obra=DATA.obras.find(o=>o.id===i.dataset.o);obra[i.dataset.f]=i.value; if(i.dataset.f==='status') sincRetencoes(obra); save(DATA);render();};
+      if(i.type==='date'){ i.setAttribute('max','9999-12-31'); i.onchange=()=>{ if(i.value && document.activeElement===i && +i.value.slice(0,4)<1900){ i.dataset.pend='1'; return; } i.dataset.pend=''; grava(); }; i.onblur=()=>{ if(i.dataset.pend==='1'){ i.dataset.pend=''; if(+i.value.slice(0,4)>=1900) grava(); } }; }
+      else i.onchange=grava; });
     const filterStatusSel=document.getElementById('filterStatus');
     if(filterStatusSel) filterStatusSel.onchange=e=>{FILTER_STATUS=e.target.value;render();};
     document.querySelectorAll('.relatorioobra').forEach(b=>b.onclick=()=>{ abrirRelatorioObra(b.dataset.o); });
@@ -4064,7 +4066,9 @@ function attachMain(){
     document.querySelectorAll('.cobraEt').forEach(b=>b.onclick=()=>{ const k=b.dataset.u+'|'+b.dataset.o; COLAB_OBRA_ABERTA[k]=!COLAB_OBRA_ABERTA[k]; render(); });
     document.querySelectorAll('.colabDoc').forEach(c=>c.onchange=e=>{const u=DATA.colaboradores.find(x=>x.id===c.dataset.u); if(u){u.docTipo=e.target.value; save(DATA); render();}});
     document.querySelectorAll('.colabSocio').forEach(c=>c.onchange=e=>{const u=DATA.colaboradores.find(x=>x.id===c.dataset.u); if(u){u.socio=e.target.checked; save(DATA); render();}});
-    document.querySelectorAll('.colabCampo').forEach(i=>i.onchange=e=>{const u=DATA.colaboradores.find(x=>x.id===i.dataset.u);u[i.dataset.f]=e.target.value;save(DATA);render();});
+    document.querySelectorAll('.colabCampo').forEach(i=>{ const grava=()=>{const u=DATA.colaboradores.find(x=>x.id===i.dataset.u);u[i.dataset.f]=i.value;save(DATA);render();};
+      if(i.type==='date'){ i.setAttribute('max','9999-12-31'); i.onchange=()=>{ if(i.value && document.activeElement===i && +i.value.slice(0,4)<1900){ i.dataset.pend='1'; return; } i.dataset.pend=''; grava(); }; i.onblur=()=>{ if(i.dataset.pend==='1'){ i.dataset.pend=''; if(+i.value.slice(0,4)>=1900) grava(); } }; }
+      else i.onchange=grava; });
     document.querySelectorAll('.delcolab').forEach(b=>b.onclick=()=>{
       const id=b.dataset.u, u=DATA.colaboradores.find(x=>x.id===id); if(!u||colabEmUso(id)) return;
       if(PENDING_DEL!==id){ PENDING_DEL=id; render(); return; }
