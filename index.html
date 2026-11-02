@@ -766,7 +766,29 @@ function migrarEtapasSimples(etapas){
     return {nome:e.nome,pct:e.pct,concluido:!!e.concluido,data:e.data||''};
   });
 }
+// Obras de valor recorrente (mensalidade): gera uma parcela por mês, do início até o mês atual (ou até o fim informado).
+// O valor total do serviço = mensalidade x nº de meses, e cada parcela vale 100/n %, então a mensalidade fica sempre igual.
+function aplicarRecorrentes(d){
+  let ch=false; const ym=hojeISO().slice(0,7);
+  (d.obras||[]).forEach(o=>{
+    const r=o.recorrente; if(!r||!(+r.valor>0)||!/^\d{4}-\d{2}$/.test(r.inicio||'')) return;
+    const sv=(o.servicos||[])[0]; if(!sv) return;
+    const fim=(r.fim&&/^\d{4}-\d{2}$/.test(r.fim)&&r.fim<ym)?r.fim:ym;
+    o.etapasPagamento=o.etapasPagamento||[];
+    const tem=new Set(o.etapasPagamento.map(e=>e.mes).filter(Boolean));
+    let [y,m]=r.inicio.split('-').map(Number);
+    for(let g=0;g<600;g++){ const k=y+'-'+String(m).padStart(2,'0'); if(k>fim) break;
+      if(!tem.has(k)){ o.etapasPagamento.push({id:'e'+Date.now()+Math.random().toString(36).slice(2,6),pct:0,data:'',nome:'Mensalidade - '+String(m).padStart(2,'0')+'/'+y,mes:k,pago:false,baixas:[],nfData:'',nfNumero:'',vencimento:''}); tem.add(k); ch=true; }
+      m++; if(m>12){m=1;y++;} }
+    const mens=o.etapasPagamento.filter(e=>e.mes); const n=mens.length; if(!n) return;
+    const total=Math.round(+r.valor*n*100)/100; if(sv.valorTotal!==total){ sv.valorTotal=total; ch=true; }
+    mens.forEach(e=>{ const pc=100/n; if(Math.abs((e.pct||0)-pc)>1e-9){ e.pct=pc; ch=true; } });
+  });
+  if(ch) window.__migCong=true;
+  return ch;
+}
 function ensureTiposPadrao(d){
+  try{ aplicarRecorrentes(d); }catch(e){}
   const padrao=['Elétrica','Sistemas','SPDA','SDAI','Subestação','Outros'];
   padrao.forEach(nome=>{
     if(!d.tiposServico.some(t=>t.nome.toLowerCase()===nome.toLowerCase())){
@@ -2300,6 +2322,9 @@ function obrasView(){
         <div class="field"><label>Empresa contratada (minha empresa)</label><select class="obraCampo" data-o="${esc(obra.id)}" data-f="empresaId">${empresaOptions(obra.empresaId)}</select></div>
         <div class="field"><label>Data de início</label><input type="date" class="obraCampo" data-o="${esc(obra.id)}" data-f="dataInicio" value="${esc(obra.dataInicio||'')}"></div>
         <div class="field"><label>Previsão de término</label><input type="date" class="obraCampo" data-o="${esc(obra.id)}" data-f="dataPrevisao" value="${esc(obra.dataPrevisao||'')}"></div>
+        <div class="field"><label>Valor mensal recorrente (R$) — deixe vazio se não for recorrente</label><input type="number" step="0.01" min="0" class="recCampo" data-o="${esc(obra.id)}" data-f="valor" value="${obra.recorrente&&obra.recorrente.valor?obra.recorrente.valor:''}"></div>
+        <div class="field"><label>Recorrência: primeiro mês</label><input type="month" class="recCampo" data-o="${esc(obra.id)}" data-f="inicio" value="${esc(obra.recorrente&&obra.recorrente.inicio||'')}"></div>
+        <div class="field"><label>Recorrência: último mês (opcional)</label><input type="month" class="recCampo" data-o="${esc(obra.id)}" data-f="fim" value="${esc(obra.recorrente&&obra.recorrente.fim||'')}"></div>
       </div>
       <h3>Dados do cliente</h3>
       <div class="grid2">
@@ -3594,6 +3619,12 @@ function attachMain(){
       DATA.obras.push({id,nomeObra:'Nova obra',codigo,status:'andamento',dataInicio:'',dataPrevisao:'',empresaId:'',cliente:{nome:'',documento:'',telefone:'',email:'',endereco:'',construtora:'',spe:''},condicoes:'',etapasPagamento:etapasPadrao(),despesasObra:[{id:novoId('do'),nome:'ART',fornecedor:'CREA',colaboradorId:'',pct:0,modo:'pct'},{id:novoId('do'),nome:'Lista de materiais',fornecedor:'',colaboradorId:'',pct:0,modo:'pct'}],equipe:[],servicos:[{id:'s'+Date.now(),tipoId:DATA.tiposServico[0]?.id||'',valorTotal:0,imposto:18.5,despesas:[],aditivos:[]}],reajustes:[]});
       OPEN_OBRA=id; save(DATA); render();
     };
+    document.querySelectorAll('.recCampo').forEach(i=>{ const grava=()=>{ const obra=DATA.obras.find(o=>o.id===i.dataset.o); const r=Object.assign({valor:0,inicio:'',fim:''},obra.recorrente||{});
+        r[i.dataset.f]=i.dataset.f==='valor'?(parseFloat(i.value)||0):i.value;
+        if(!(r.valor>0)) delete obra.recorrente; else { if(!r.inicio) r.inicio=(obra.dataInicio||hojeISO()).slice(0,7); obra.recorrente=r; }
+        aplicarRecorrentes(DATA); save(DATA); render(); };
+      if(i.type==='month'){ i.setAttribute('max','9999-12'); i.onchange=()=>{ if(i.value && document.activeElement===i && +i.value.slice(0,4)<1900){ i.dataset.pend='1'; return; } i.dataset.pend=''; grava(); }; i.onblur=()=>{ if(i.dataset.pend==='1'){ i.dataset.pend=''; if(+i.value.slice(0,4)>=1900) grava(); } }; }
+      else i.onchange=grava; });
     document.querySelectorAll('.obraCampo').forEach(i=>{ const grava=()=>{const obra=DATA.obras.find(o=>o.id===i.dataset.o);obra[i.dataset.f]=i.value; if(i.dataset.f==='status') sincRetencoes(obra); save(DATA);render();};
       if(i.type==='date'){ i.setAttribute('max','9999-12-31'); i.onchange=()=>{ if(i.value && document.activeElement===i && +i.value.slice(0,4)<1900){ i.dataset.pend='1'; return; } i.dataset.pend=''; grava(); }; i.onblur=()=>{ if(i.dataset.pend==='1'){ i.dataset.pend=''; if(+i.value.slice(0,4)>=1900) grava(); } }; }
       else i.onchange=grava; });
