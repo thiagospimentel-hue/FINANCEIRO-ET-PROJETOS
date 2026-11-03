@@ -688,6 +688,7 @@ function ciRevisao(caixa,c,ctx){
       despesasObra:[{id:novoId('do'),nome:'ART',fornecedor:'CREA',colaboradorId:'',pct:0,modo:'pct'},{id:novoId('do'),nome:'Lista de materiais',fornecedor:'',colaboradorId:'',pct:0,modo:'pct'}],
       equipe:[],servicos:[{id:'s'+Date.now(),tipoId:$('ci_tipo').value,valorTotal:valor,imposto:Number($('ci_imp').value)||0,despesas:[],aditivos:[]}],reajustes:[],
       documentos:ctx.caminho?[{id:novoId('dc'),tipo:'Contrato',nome:ctx.file.name,path:ctx.caminho,data:new Date().toISOString().slice(0,10)}]:[]};
+    if(!avisoDuplicidade(obra.cliente.documento,obra.id)) return;
     DATA.obras.push(obra); OPEN_OBRA=obra.id; logAcao('Obra criada a partir do contrato: '+nome); save(DATA); ctx.fechar(); render();
   };
 }
@@ -768,6 +769,15 @@ function migrarEtapasSimples(etapas){
 }
 // Obras de valor recorrente (mensalidade): gera uma parcela por mês, do início até o mês atual (ou até o fim informado).
 // O valor total do serviço = mensalidade x nº de meses, e cada parcela vale 100/n %, então a mensalidade fica sempre igual.
+// Aviso de duplicidade: já existe obra com o mesmo CNPJ/CPF de cliente?
+function obrasComDocumento(doc,exceto){
+  const n=String(doc||'').replace(/\D/g,''); if(n.length<11) return [];
+  return (DATA.obras||[]).filter(o=>o.id!==exceto && String((o.cliente&&o.cliente.documento)||'').replace(/\D/g,'')===n);
+}
+function avisoDuplicidade(doc,exceto){
+  const l=obrasComDocumento(doc,exceto); if(!l.length) return true;
+  return confirm('Já existe obra com este CNPJ/CPF de cliente:\n\n'+l.map(o=>'• '+(o.codigo||'')+' — '+(o.nomeObra||'')).join('\n')+'\n\nPode ser o mesmo contrato cadastrado duas vezes. Deseja continuar mesmo assim?');
+}
 function aplicarRecorrentes(d){
   let ch=false; const ym=hojeISO().slice(0,7);
   (d.obras||[]).forEach(o=>{
@@ -3631,7 +3641,7 @@ function attachMain(){
     const filterStatusSel=document.getElementById('filterStatus');
     if(filterStatusSel) filterStatusSel.onchange=e=>{FILTER_STATUS=e.target.value;render();};
     document.querySelectorAll('.relatorioobra').forEach(b=>b.onclick=()=>{ abrirRelatorioObra(b.dataset.o); });
-    document.querySelectorAll('.cliCampo').forEach(i=>i.onchange=e=>{const obra=DATA.obras.find(o=>o.id===i.dataset.o);obra.cliente[i.dataset.f]=e.target.value;save(DATA);});
+    document.querySelectorAll('.cliCampo').forEach(i=>i.onchange=e=>{const obra=DATA.obras.find(o=>o.id===i.dataset.o); if(i.dataset.f==='documento' && !avisoDuplicidade(e.target.value,obra.id)){ e.target.value=obra.cliente.documento||''; return; } obra.cliente[i.dataset.f]=e.target.value;save(DATA);});
     document.querySelectorAll('.obraNome').forEach(i=>i.onchange=e=>{const obra=DATA.obras.find(o=>o.id===i.dataset.o);obra.nomeObra=e.target.value;save(DATA);render();});
     document.querySelectorAll('.obraCond').forEach(i=>i.onchange=e=>{const obra=DATA.obras.find(o=>o.id===i.dataset.o);obra.condicoes=e.target.value;save(DATA);});
     document.querySelectorAll('.etapaNome').forEach(i=>i.onchange=e=>{const obra=DATA.obras.find(o=>o.id===i.dataset.o);obra.etapasPagamento[i.dataset.i].nome=e.target.value;save(DATA);});
