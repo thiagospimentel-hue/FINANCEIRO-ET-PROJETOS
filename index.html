@@ -2042,6 +2042,67 @@ function totaisSimplesCard(obras){
     ${linhas.length>1?row('Total ('+linhas.length+' obras)',tot,true):''}</table></div>
     <p class="small" style="margin:8px 0 0;">Valor total = soma das disciplinas. Despesas = equipe + despesas da obra + coordenação. Faturado = etapas com NF emitida. Mostra as obras dos filtros acima (ou as que você marcar); canceladas ficam de fora.</p></div>`;
 }
+/* ===== Dashboard: painel de ação, gráfico por mês, carteira por empresa (somente leitura) ===== */
+function dashEtapasAtivas(){
+  const hoje=new Date().toISOString().slice(0,10); const out=[];
+  obrasVisiveis().filter(o=>(o.status||'andamento')!=='cancelada').forEach(o=>{
+    resumoEtapasObra(o).forEach(e=>{ out.push(Object.assign({obra:o,hoje},e)); });
+  });
+  return out;
+}
+function dashAcoesCard(){
+  const et=dashEtapasAtivas(); if(!et.length) return '';
+  const hoje=new Date().toISOString().slice(0,10);
+  const lim=new Date(Date.now()+7*864e5).toISOString().slice(0,10);
+  const aberta=e=>!e.pago && e.saldo>0.005;
+  const venc=et.filter(e=>aberta(e)&&e.vencimento&&e.vencimento<hoje).sort((a,b)=>a.vencimento<b.vencimento?-1:1);
+  const prox=et.filter(e=>aberta(e)&&e.vencimento&&e.vencimento>=hoje&&e.vencimento<=lim).sort((a,b)=>a.vencimento<b.vencimento?-1:1);
+  const emitir=et.filter(e=>aberta(e)&&e.status==='pronto'&&!e.nfNumero&&!e.nfData);
+  const brData=iso=>iso?iso.split('-').reverse().join('/'):'';
+  const lin=(e,txt)=>`<div class="dashAcaoLin" data-o="${esc(e.obra.id)}" style="display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);cursor:pointer;"><span><b>${esc(e.obra.nomeObra)}</b> <span class="small">· ${esc(e.nome||'Etapa')}${txt?' · '+txt:''}</span></span><b style="white-space:nowrap;">${fmt(e.saldo)}</b></div>`;
+  const bloco=(tit,cls,arr,fnTxt)=>arr.length?`<div style="margin-top:12px;"><div style="font-weight:700;" class="${cls}">${tit} (${arr.length}) — ${fmt(arr.reduce((t,e)=>t+e.saldo,0))}</div>${arr.slice(0,5).map(e=>lin(e,fnTxt(e))).join('')}${arr.length>5?`<div class="small" style="padding-top:6px;">+ ${arr.length-5} outras — veja na aba Resumo p/ cobrança.</div>`:''}</div>`:'';
+  const corpo=bloco('🔴 Vencidas a receber','neg',venc,e=>'venceu '+brData(e.vencimento))
+    +bloco('🟠 Vencem nos próximos 7 dias','',prox,e=>'vence '+brData(e.vencimento))
+    +bloco('🧾 Prontas para emitir NF','',emitir,()=>'');
+  return `<div class="card"><h2>O que precisa de ação</h2>${corpo||'<p class="small" style="margin:6px 0 0;">✅ Nada vencido, nada vencendo nos próximos 7 dias e nenhuma etapa aguardando NF.</p>'}<p class="small" style="margin:8px 0 0;">Toque numa linha para abrir a cobrança daquela obra.</p></div>`;
+}
+function dashMesesCard(){
+  const et=dashEtapasAtivas(); if(!et.length) return '';
+  const d0=new Date(); const meses=[];
+  for(let i=0;i<6;i++){ const d=new Date(d0.getFullYear(),d0.getMonth()+i,1); meses.push(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')); }
+  const dados=meses.map(m=>({m,rec:0,aRec:0}));
+  let semVenc=0, atrasado=0; const mesAtual=meses[0];
+  et.forEach(e=>{
+    if(!e.vencimento){ semVenc+=e.saldo; return; }
+    const mv=e.vencimento.slice(0,7);
+    if(mv<mesAtual){ atrasado+=e.saldo; return; }
+    const x=dados.find(k=>k.m===mv); if(!x) return;
+    x.rec+=e.recebido; x.aRec+=e.saldo;
+  });
+  const max=Math.max(1,...dados.map(k=>k.rec+k.aRec));
+  const nome=m=>['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][+m.slice(5)-1]+'/'+m.slice(2,4);
+  const barras=dados.map(k=>`<div style="display:grid;grid-template-columns:54px 1fr;gap:8px;align-items:center;margin:7px 0;">
+    <span class="small">${nome(k.m)}</span>
+    <div><div style="display:flex;height:16px;border-radius:5px;overflow:hidden;background:var(--border);width:${Math.max(2,(k.rec+k.aRec)/max*100)}%;"><i style="display:block;width:${(k.rec+k.aRec)?k.rec/(k.rec+k.aRec)*100:0}%;background:#22a05a;"></i><i style="display:block;flex:1;background:var(--accent);"></i></div>
+    <div class="small">${k.rec+k.aRec>0?`recebido ${fmt(k.rec)} · a receber <b>${fmt(k.aRec)}</b>`:'—'}</div></div></div>`).join('');
+  return `<div class="card"><h2>Recebimentos por mês de vencimento</h2>
+    <div class="small" style="margin-bottom:4px;"><span style="color:#22a05a;">■</span> recebido &nbsp; <span style="color:var(--accent);">■</span> a receber</div>${barras}
+    ${atrasado>0.005?`<p class="small" style="margin:8px 0 0;">Saldo de meses anteriores ainda em aberto: <b class="neg">${fmt(atrasado)}</b></p>`:''}
+    ${semVenc>0.005?`<p class="small" style="margin:4px 0 0;">Etapas sem data de vencimento (não entram no gráfico): <b>${fmt(semVenc)}</b></p>`:''}</div>`;
+}
+function dashEmpresasCard(){
+  const emps=DATA.minhasEmpresas||[]; if(emps.length<2) return '';
+  const et=dashEtapasAtivas();
+  const linhas=emps.map(emp=>{ let contr=0,rec=0,aRec=0,n=new Set();
+    et.filter(e=>e.obra.empresaId===emp.id).forEach(e=>{ contr+=e.valor; rec+=e.recebido; aRec+=e.saldo; n.add(e.obra.id); });
+    return `<tr><td><b>${esc(emp.nome)}</b><div class="small">${n.size} obra(s)</div></td><td class="num">${fmt(contr)}</td><td class="num pos">${fmt(rec)}</td><td class="num">${fmt(aRec)}</td></tr>`; }).join('');
+  return `<div class="card"><h2>Carteira por empresa</h2><div style="overflow-x:auto;"><table><tr><th>Empresa</th><th class="num">Contratado</th><th class="num">Recebido</th><th class="num">A receber</th></tr>${linhas}</table></div><p class="small" style="margin:8px 0 0;">Soma das etapas de pagamento das obras (sem canceladas).</p></div>`;
+}
+function dashKpisTopo(){
+  const ind=indicadoresFinanceiros();
+  const k=(t,v,c)=>`<div class="kpi ${c||''}"><div class="k">${t}</div><div class="v">${fmt(v)}</div></div>`;
+  return `<div class="kpis" style="margin-bottom:12px;">${k('A receber (NF emitida)',ind.aReceber)}${k('Vencido a receber',ind.vencidoReceber,ind.vencidoReceber>0?'bad':'ok')}${k('Recebido no mês',ind.recebidoMes,'ok')}${k('Saldo em caixa',ind.saldoCaixa,ind.saldoCaixa>=0?'ok':'bad')}</div>`;
+}
 function dashboardView(){
   const obrasTodas=obrasVisiveis();
   const obras=obrasDash();
@@ -2077,7 +2138,9 @@ function dashboardView(){
   const pend=aprovacoesPendentes(); const pendTot=pend.reduce((x,y)=>x+y.valor,0);
   const pendCard=pend.length?`<div class="aviso" style="justify-content:space-between;border-color:#f59e0b;"><span>⏳ <b>${pend.length}</b> entrega(s) da equipe aguardando a sua aprovação — ${fmt(pendTot)}</span><button class="btn goAprov">Revisar agora</button></div>`:'';
   return `
+  ${dashKpisTopo()}
   ${pendCard}
+  ${dashAcoesCard()}
   ${dashFiltroBar(obrasTodas.length,obras.length)}
   ${totaisSimplesCard(obras)}
   <div class="card">
@@ -2122,6 +2185,8 @@ function dashboardView(){
     <div style="margin-top:10px;">${statusChips}</div>
   </div>
   ${fluxoProjetadoCard(ind)}
+  ${dashMesesCard()}
+  ${dashEmpresasCard()}
   <div class="card">
     <h2>Ranking de margem prevista por obra</h2>
     ${rankRows}
@@ -3805,6 +3870,7 @@ function attachMain(){
     const dS=document.getElementById('dashStatus'); if(dS) dS.onchange=e=>{FILTER_DASH_STATUS=e.target.value;render();};
     const dE=document.getElementById('dashEmp'); if(dE) dE.onchange=e=>{FILTER_DASH_EMP=e.target.value;render();};
     const dL=document.getElementById('dashLimpar'); if(dL) dL.onclick=()=>{FILTER_DASH_BUSCA='';FILTER_DASH_STATUS='';FILTER_DASH_EMP='';FILTER_DASH_SEL=[];FILTER_FAT_MES='';FILTER_FAT_STATUS='';render();};
+    document.querySelectorAll('.dashAcaoLin').forEach(r=>r.onclick=()=>{ SEL_RESUMO=r.dataset.o; TAB='resumo'; render(); window.scrollTo(0,0); });
     const ga=document.querySelector('.goAprov'); if(ga) ga.onclick=()=>{TAB='aprovacoes';render();};
     const fMes=document.getElementById('filterFatMes'); if(fMes) fMes.onchange=e=>{FILTER_FAT_MES=e.target.value;render();};
     const fStatus=document.getElementById('filterFatStatus'); if(fStatus) fStatus.onchange=e=>{FILTER_FAT_STATUS=e.target.value;render();};
