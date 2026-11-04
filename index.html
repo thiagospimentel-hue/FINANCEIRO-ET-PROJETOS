@@ -682,7 +682,7 @@ function ciRevisao(caixa,c,ctx){
     let etapas;
     if(parc.length){ const pcts=ciPctDasParcelas(parc,soma_); etapas=parc.map((p,i)=>({id:'e'+Date.now()+(i+1),nome:p.nome.trim(),pct:pcts[i],pago:false,data:'',nfNumero:'',nfData:'',vencimento:''})); }
     else etapas=etapasPadrao();
-    const obra={id:ctx.obraId,nomeObra:nome,codigo:$('ci_cod').value.trim()||('OBRA-'+String(DATA.obras.length+1).padStart(3,'0')),status:'andamento',dataInicio:$('ci_ini').value,dataPrevisao:$('ci_fim').value,empresaId:$('ci_emp').value,
+    const obra={id:ctx.obraId,nomeObra:nome,codigo:$('ci_cod').value.trim()||proximoCodigoObra(),status:'andamento',dataInicio:$('ci_ini').value,dataPrevisao:$('ci_fim').value,empresaId:$('ci_emp').value,
       cliente:{nome:$('ci_cli').value.trim(),documento:$('ci_doc').value.trim(),telefone:$('ci_tel').value.trim(),email:$('ci_mail').value.trim(),endereco:$('ci_end').value.trim(),construtora:$('ci_cons').value.trim(),spe:$('ci_spe').value.trim()},
       condicoes:$('ci_cond').value,etapasPagamento:etapas,
       despesasObra:[{id:novoId('do'),nome:'ART',fornecedor:'CREA',colaboradorId:'',pct:0,modo:'pct'},{id:novoId('do'),nome:'Lista de materiais',fornecedor:'',colaboradorId:'',pct:0,modo:'pct'}],
@@ -769,6 +769,12 @@ function migrarEtapasSimples(etapas){
 }
 // Obras de valor recorrente (mensalidade): gera uma parcela por mês, do início até o mês atual (ou até o fim informado).
 // O valor total do serviço = mensalidade x nº de meses, e cada parcela vale 100/n %, então a mensalidade fica sempre igual.
+// Código próprio da ET: ET-AAAA-NNN (sequencial por ano, nunca reaproveita número)
+function proximoCodigoObra(d){
+  const ano=new Date().getFullYear(); let mx=0;
+  ((d||DATA).obras||[]).forEach(o=>{ const m=/^ET-(\d{4})-(\d+)$/.exec(o.codigo||''); if(m && +m[1]===ano) mx=Math.max(mx,+m[2]); });
+  return 'ET-'+ano+'-'+String(mx+1).padStart(3,'0');
+}
 // Aviso de duplicidade: já existe obra com o mesmo CNPJ/CPF de cliente?
 function obrasComDocumento(doc,exceto){
   const n=String(doc||'').replace(/\D/g,''); if(n.length<11) return [];
@@ -807,7 +813,7 @@ function ensureTiposPadrao(d){
   });
   if(!d.minhasEmpresas) d.minhasEmpresas=[];
   (d.obras||[]).forEach((o,i)=>{
-    if(!o.codigo) o.codigo='OBRA-'+String(i+1).padStart(3,'0');
+    if(!o.codigo) o.codigo=proximoCodigoObra(d);
     if(!o.status) o.status='andamento';
     if(o.dataInicio===undefined) o.dataInicio='';
     if(o.dataPrevisao===undefined) o.dataPrevisao='';
@@ -3625,7 +3631,7 @@ function attachMain(){
     const addobra=document.getElementById('addobra');
     if(addobra) addobra.onclick=()=>{
       const id='o'+Date.now();
-      const codigo='OBRA-'+String(DATA.obras.length+1).padStart(3,'0');
+      const codigo=proximoCodigoObra();
       DATA.obras.push({id,nomeObra:'Nova obra',codigo,status:'andamento',dataInicio:'',dataPrevisao:'',empresaId:'',cliente:{nome:'',documento:'',telefone:'',email:'',endereco:'',construtora:'',spe:''},condicoes:'',etapasPagamento:etapasPadrao(),despesasObra:[{id:novoId('do'),nome:'ART',fornecedor:'CREA',colaboradorId:'',pct:0,modo:'pct'},{id:novoId('do'),nome:'Lista de materiais',fornecedor:'',colaboradorId:'',pct:0,modo:'pct'}],equipe:[],servicos:[{id:'s'+Date.now(),tipoId:DATA.tiposServico[0]?.id||'',valorTotal:0,imposto:18.5,despesas:[],aditivos:[]}],reajustes:[]});
       OPEN_OBRA=id; save(DATA); render();
     };
