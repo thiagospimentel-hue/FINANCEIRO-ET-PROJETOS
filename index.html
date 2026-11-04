@@ -165,6 +165,23 @@ td.num{white-space:nowrap;}
 .concl input{width:16px;height:16px;margin:0;}
 .vazio{text-align:center;padding:36px 16px;color:var(--muted);font-size:13.5px;}
 @media(max-width:900px){.kpi{min-width:0;overflow:hidden;} .kpi .v{font-size:clamp(15px,4.6vw,22px);word-break:break-word;} .kpis{grid-template-columns:1fr 1fr;} .etapa{grid-template-columns:1fr 1fr;}}
+/* ===== Celular: só apresentação (sem alterar lógica) ===== */
+@media(max-width:600px){
+  .main .wrap{padding:12px 12px 40px;} h1{font-size:22px;}
+  .card{padding:14px;border-radius:12px;}
+  input,select,textarea{font-size:16px!important;max-width:100%;} /* evita zoom automático do iPhone */
+  button,.btn,.chip,.tab,.menuBtn{min-height:40px;}
+  .tabs button,.side .tabs button{padding:12px 14px;font-size:15px;}
+  table{font-size:12.5px;} th,td{padding:7px 8px;}
+  table td:first-child,table th:first-child{min-width:150px;}
+  td.num,th.num{white-space:nowrap;}
+  .chips{gap:6px;} .chip{padding:8px 13px;}
+  .kpis{gap:8px;} .kpi{padding:10px 12px;}
+  .etapa{grid-template-columns:1fr;gap:6px;padding:12px 14px;}
+  .obrahead{padding:12px 14px;}
+  .hero{padding:16px;} .hero .prog{min-width:0;flex-basis:100%;}
+  .card{-webkit-overflow-scrolling:touch;}
+}
 </style>
 </head>
 <body>
