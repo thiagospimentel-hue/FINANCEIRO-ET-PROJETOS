@@ -2008,6 +2008,7 @@ function obrasDash(){
     return q.every(t=>alvo.includes(t));
   });
 }
+let DASH_CHIPS_ABERTO=false;
 function dashFiltroBar(total,achadas){
   const st=Object.keys(STATUS_LABEL).map(k=>`<option value="${k}" ${k===FILTER_DASH_STATUS?'selected':''}>${STATUS_LABEL[k]}</option>`).join('');
   const emp=(DATA.minhasEmpresas||[]).map(e=>`<option value="${esc(e.id)}" ${e.id===FILTER_DASH_EMP?'selected':''}>${esc(e.nome)}</option>`).join('');
@@ -2019,8 +2020,9 @@ function dashFiltroBar(total,achadas){
       <select id="dashEmp"><option value="">Todas as empresas</option>${emp}</select>
       ${dashFiltroAtivo()?'<button class="btn secondary" id="dashLimpar">Limpar filtros</button>':''}
     </div>
-    <div class="row-flex" style="flex-wrap:wrap;gap:6px;margin-top:8px;">${obrasVisiveis().map(o=>`<button class="btn ${FILTER_DASH_SEL.includes(o.id)?'':'secondary'} dashChip" data-n="${esc(o.nomeObra)}" data-id="${esc(o.id)}" title="${esc(o.codigo||'')}">${FILTER_DASH_SEL.includes(o.id)?'✓ ':''}${esc(o.nomeObra)}</button>`).join('')}</div>
-    <p class="small" style="margin:6px 0 0;">Clique em uma ou mais obras para ver só elas e a soma delas.</p>
+    <div class="row-flex" style="flex-wrap:wrap;gap:6px;margin-top:8px;align-items:center;"><button class="btn secondary" id="dashChipsToggle">${DASH_CHIPS_ABERTO?'▲ Recolher lista de obras':'▼ Escolher obras ('+obrasVisiveis().length+')'}</button>${FILTER_DASH_SEL.length?`<span class="small">${FILTER_DASH_SEL.length} selecionada(s)</span>`:''}</div>
+    <div class="row-flex" style="flex-wrap:wrap;gap:6px;margin-top:8px;">${obrasVisiveis().filter(o=>DASH_CHIPS_ABERTO||FILTER_DASH_SEL.includes(o.id)).map(o=>`<button class="btn ${FILTER_DASH_SEL.includes(o.id)?'':'secondary'} dashChip" data-n="${esc(o.nomeObra)}" data-id="${esc(o.id)}" title="${esc(o.codigo||'')}">${FILTER_DASH_SEL.includes(o.id)?'✓ ':''}${esc(o.nomeObra)}</button>`).join('')}</div>
+    ${DASH_CHIPS_ABERTO?'<p class="small" style="margin:6px 0 0;">Clique em uma ou mais obras para ver só elas e a soma delas.</p>':''}
     ${dashFiltroAtivo()?`<p class="small" style="margin:8px 0 0;">Mostrando <b>${achadas}</b> de ${total} obra(s). Os blocos de caixa e equipe continuam mostrando a empresa toda; "Visão geral", "Ranking" e "Faturamento por etapa" seguem o filtro.</p>`:''}
   </div>`;
 }
@@ -3867,6 +3869,7 @@ function attachMain(){
     const dB=document.getElementById('dashBusca');
     if(dB) dB.oninput=e=>{ FILTER_DASH_BUSCA=e.target.value; render(); const n=document.getElementById('dashBusca'); if(n){ n.focus(); try{ n.setSelectionRange(n.value.length,n.value.length); }catch(_){} } };
     document.querySelectorAll('.dashChip').forEach(b=>b.onclick=()=>{ FILTER_DASH_SEL = FILTER_DASH_SEL.includes(b.dataset.id) ? FILTER_DASH_SEL.filter(x=>x!==b.dataset.id) : FILTER_DASH_SEL.concat(b.dataset.id); render(); });
+    const dT=document.getElementById('dashChipsToggle'); if(dT) dT.onclick=()=>{ DASH_CHIPS_ABERTO=!DASH_CHIPS_ABERTO; render(); };
     const dS=document.getElementById('dashStatus'); if(dS) dS.onchange=e=>{FILTER_DASH_STATUS=e.target.value;render();};
     const dE=document.getElementById('dashEmp'); if(dE) dE.onchange=e=>{FILTER_DASH_EMP=e.target.value;render();};
     const dL=document.getElementById('dashLimpar'); if(dL) dL.onclick=()=>{FILTER_DASH_BUSCA='';FILTER_DASH_STATUS='';FILTER_DASH_EMP='';FILTER_DASH_SEL=[];FILTER_FAT_MES='';FILTER_FAT_STATUS='';render();};

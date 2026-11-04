@@ -16,7 +16,7 @@ const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwrig
   T('total 2 obras: 200.000 / 140.000 / 60.000, cancelada fora', /Total \(2 obras\)\s*R\$\s*200\.000,00/.test(t)&&!/Obra o3/.test(t)&&/140\.000,00/.test(t), t);
   await p.selectOption('#dashEmp','e2'); await p.waitForTimeout(100); t=await card();
   T('filtro empresa: só a obra 2', /Obra o2/.test(t)&&!/Obra o1/.test(t), t);
-  await p.selectOption('#dashEmp',''); await p.click('.dashChip[data-id="o1"]'); await p.waitForTimeout(100); t=await card();
+  await p.selectOption('#dashEmp',''); await p.click('#dashChipsToggle'); await p.click('.dashChip[data-id="o1"]'); await p.waitForTimeout(100); t=await card();
   T('obra clicada: só a obra 1', /Obra o1/.test(t)&&!/Obra o2/.test(t), t);
   T('sem erros', errs.length===0, errs); console.log(ok+' ok, '+ko+' falhas'); await b.close(); process.exit(ko?1:0);
 })();

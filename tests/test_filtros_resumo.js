@@ -18,7 +18,7 @@ const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwrig
   T('busca por código', await p.evaluate(()=>obrasDash().map(o=>o.id).join())==='o1');
   await p.click('#dashLimpar'); await p.selectOption('#dashStatus','concluida');
   T('filtro de status', await p.evaluate(()=>obrasDash().map(o=>o.id).join())==='o2');
-  await p.click('#dashLimpar'); await p.click('.dashChip[data-n="ROTA PANORAMA"]');
+  await p.click('#dashLimpar'); await p.click('#dashChipsToggle'); await p.click('.dashChip[data-n="ROTA PANORAMA"]');
   T('atalho (chip) da obra filtra', await p.evaluate(()=>obrasDash().map(o=>o.id).join())==='o1');
   T('lista de sugestões com as obras cadastradas', await p.locator('#dashObras option').count()===2);
   await p.click('.dashChip[data-n="ROTA PANORAMA"]'); T('clicar de novo limpa', await p.evaluate(()=>obrasDash().length)===2);
