@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Financeiro • Protótipo</title>
+<title>Financeiro | ET Projetos</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -1305,7 +1305,7 @@ function loginView(){
         <label class="small" style="display:flex;gap:6px;align-items:center;margin:0 0 10px;"><input type="checkbox" id="lgManter"> Manter conectado neste computador</label>
         <button class="btn" id="lgBtn" type="submit" style="width:100%;">Entrar</button>
         <p class="small" id="lgMsg" style="color:var(--bad);min-height:18px;margin:10px 0 0;">${esc(SB.aviso||'')}</p>
-        <p class="small muted">Esqueceu a senha? Peça ao administrador para redefinir.</p>
+        <p class="small" style="margin:6px 0 0;"><a href="#" id="lgEsqueci">Esqueci minha senha</a></p>
       </form>
     </div></div>`;
   const opts=DATA.colaboradores.map(u=>`<option value="${esc(u.id)}">${esc(u.nome)}</option>`).join('');
@@ -1333,6 +1333,16 @@ function attachLogin(){
       SB.manter=document.getElementById('lgManter').checked;
       try{ await sbEntrar(document.getElementById('lgEmail').value.trim().toLowerCase(), document.getElementById('lgSenha').value); }
       catch(err){ m.textContent=err.message; b.disabled=false; b.textContent='Entrar'; }
+    };
+    const esq=document.getElementById('lgEsqueci');
+    if(esq) esq.onclick=async ev=>{
+      ev.preventDefault();
+      const m=document.getElementById('lgMsg'); const em=document.getElementById('lgEmail').value.trim().toLowerCase();
+      if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)){ m.style.color='var(--bad)'; m.textContent='Digite o seu e-mail no campo acima e toque de novo em "Esqueci minha senha".'; return; }
+      esq.style.pointerEvents='none'; m.style.color='var(--muted)'; m.textContent='Enviando…';
+      try{ await fetch(SB_URL+'/auth/v1/recover?redirect_to='+encodeURIComponent(location.origin+location.pathname),{method:'POST',headers:{apikey:SB_KEY,'Content-Type':'application/json'},body:JSON.stringify({email:em})}); }catch(_){}
+      m.textContent='Se este e-mail tiver cadastro, enviamos um link para criar uma nova senha. Verifique também o spam. O link vale por pouco tempo.';
+      setTimeout(()=>{ esq.style.pointerEvents=''; },30000);
     };
     return;
   }
