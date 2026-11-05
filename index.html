@@ -993,6 +993,8 @@ let FILTER_CAIXA_COLAB='';
 let FILTER_STATUS='';
 let FILTER_FAT_MES='';
 let FILTER_FAT_STATUS='';
+let FILTER_FAT_NF='';
+let FILTER_FAT_ETAPA='';
 let FILTER_DASH_BUSCA='', FILTER_DASH_STATUS='', FILTER_DASH_EMP='';
 let FILTER_DASH_SEL=[]; let COLAB_OBRA_ABERTA={};
 let FILTER_CONTAS='';
@@ -2219,6 +2221,10 @@ function mesesFaturamentoDisponiveis(){
 }
 function faturamentoDashboardCard(){
   let lista=faturamentoFlat(obrasDash());
+  const etapasNomes=Array.from(new Set(lista.map(e=>e.nome).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'pt-BR'));
+  if(FILTER_FAT_ETAPA) lista=lista.filter(e=>e.nome===FILTER_FAT_ETAPA);
+  if(FILTER_FAT_NF==='com') lista=lista.filter(e=>e.nfNumero||e.nfData);
+  else if(FILTER_FAT_NF==='sem') lista=lista.filter(e=>!(e.nfNumero||e.nfData));
   if(FILTER_FAT_MES) lista=lista.filter(e=>e.mesVenc===FILTER_FAT_MES);
   if(FILTER_FAT_STATUS==='vencida') lista=lista.filter(e=>e.vencida);
   else if(FILTER_FAT_STATUS==='pago') lista=lista.filter(e=>e.pago);
@@ -2253,6 +2259,10 @@ function faturamentoDashboardCard(){
     <div class="row-flex" style="flex-wrap:wrap;">
       <label class="small">Mês de vencimento:</label>
       <select id="filterFatMes"><option value="">— Todos —</option>${meses.map(m=>`<option value="${m}" ${m===FILTER_FAT_MES?'selected':''}>${mesAnoLabel(m+'-01')}</option>`).join('')}</select>
+      <label class="small">Etapa:</label>
+      <select id="filterFatEtapa"><option value="">— Todas —</option>${etapasNomes.map(n=>`<option value="${esc(n)}" ${n===FILTER_FAT_ETAPA?'selected':''}>${esc(n)}</option>`).join('')}</select>
+      <label class="small">Nota fiscal:</label>
+      <select id="filterFatNf"><option value="">— Todas —</option><option value="com" ${FILTER_FAT_NF==='com'?'selected':''}>Com NF emitida</option><option value="sem" ${FILTER_FAT_NF==='sem'?'selected':''}>Sem NF (a faturar)</option></select>
       <label class="small">Situação:</label>
       <select id="filterFatStatus">
         <option value="" ${FILTER_FAT_STATUS===''?'selected':''}>— Todas —</option>
@@ -2260,11 +2270,17 @@ function faturamentoDashboardCard(){
         <option value="pendente" ${FILTER_FAT_STATUS==='pendente'?'selected':''}>A vencer / pendentes</option>
         <option value="pago" ${FILTER_FAT_STATUS==='pago'?'selected':''}>Pagas</option>
       </select>
+      ${(FILTER_FAT_MES||FILTER_FAT_STATUS||FILTER_FAT_NF||FILTER_FAT_ETAPA)?'<button class="btn secondary" id="filterFatLimpar">Limpar filtros da etapa</button>':''}
     </div>
     <div class="grid3" style="margin-top:8px;">
       <div><span class="small">Total no filtro</span><br><b>${fmt(totalFiltrado)}</b></div>
       <div><span class="small">Vencido (dentro do filtro)</span><br><b class="${totalVencido>0?'neg':''}">${fmt(totalVencido)}</b></div>
       <div><span class="small">Etapas no filtro</span><br><b>${lista.length}</b></div>
+    </div>
+    <div class="grid3" style="margin-top:8px;">
+      <div><span class="small">Recebido (no filtro)</span><br><b class="pos">${fmt(lista.reduce((t,e)=>t+e.recebido,0))}</b></div>
+      <div><span class="small">A receber (no filtro)</span><br><b>${fmt(lista.reduce((t,e)=>t+e.saldo,0))}</b></div>
+      <div></div>
     </div>
     <div style="overflow-x:auto;margin-top:8px;">
     <table><tr><th>Obra</th><th>Etapa</th><th class="num">Valor</th><th>Nº NF</th><th>Emissão NF</th><th>Vencimento</th><th style="text-align:center;">Situação</th></tr>
@@ -3876,6 +3892,9 @@ function attachMain(){
     document.querySelectorAll('.dashAcaoLin').forEach(r=>r.onclick=()=>{ SEL_RESUMO=r.dataset.o; TAB='resumo'; render(); window.scrollTo(0,0); });
     const ga=document.querySelector('.goAprov'); if(ga) ga.onclick=()=>{TAB='aprovacoes';render();};
     const fMes=document.getElementById('filterFatMes'); if(fMes) fMes.onchange=e=>{FILTER_FAT_MES=e.target.value;render();};
+    const fEt=document.getElementById('filterFatEtapa'); if(fEt) fEt.onchange=e=>{FILTER_FAT_ETAPA=e.target.value;render();};
+    const fNf=document.getElementById('filterFatNf'); if(fNf) fNf.onchange=e=>{FILTER_FAT_NF=e.target.value;render();};
+    const fLm=document.getElementById('filterFatLimpar'); if(fLm) fLm.onclick=()=>{FILTER_FAT_MES='';FILTER_FAT_STATUS='';FILTER_FAT_NF='';FILTER_FAT_ETAPA='';render();};
     const fStatus=document.getElementById('filterFatStatus'); if(fStatus) fStatus.onchange=e=>{FILTER_FAT_STATUS=e.target.value;render();};
   }
 
